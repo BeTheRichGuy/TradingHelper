@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trading Helper · 매매기록</title>
+<style>
+/* 페이퍼 누적 기록 (docs/15 12절). 대시보드와 같은 토큰·글꼴. 외부 리소스 0.
+   숫자는 전부 서버(/api/history)가 만든다 — 승률·기대값·PF·MDD 정의가 백테스트와 같다. */
+:root{
+  --bg:#0b0e13; --panel:#131820; --panel2:#0f141b; --line:#212936; --line2:#2c3646;
+  --fg:#e8eef6; --fg2:#c3ccd8; --dim:#8b98ab; --dim2:#5d6b80;
+  --up:#26c281; --down:#f2495c; --warn:#e0a33e; --info:#4f9df0; --mute:#3c4759;
+  --sel:#1a2230; --crit:#2a1a1f; --r:6px;
+}
+@media (prefers-color-scheme: light){
+  :root{ --bg:#eef1f5; --panel:#fff; --panel2:#f7f9fc; --line:#dde3ec; --line2:#c9d3e0;
+         --fg:#151a21; --fg2:#2b3442; --dim:#5c6879; --dim2:#8996a8;
+         --up:#0f9960; --down:#d63447; --warn:#a8710a; --info:#1668c9; --mute:#aab6c6;
+         --sel:#e4ecf7; --crit:#fbe9ec; }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);
+  font:13px/1.45 ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Apple SD Gothic Neo","Malgun Gothic",monospace;
+  font-variant-numeric:tabular-nums}
+button,input,select{font:inherit;color:inherit}
+a{color:inherit}
+#app{min-height:100dvh;display:grid;gap:8px;padding:8px;grid-template-columns:minmax(0,1fr);
+  grid-template-rows:auto auto auto auto auto minmax(0,1fr) auto;
+  grid-template-areas:"head" "alert" "cards" "charts" "groups" "trades" "foot"}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;min-width:0;min-height:0}
+.t{font-size:10px;letter-spacing:.08em;color:var(--dim2);text-transform:uppercase;margin-bottom:7px;font-weight:600}
+.chip{font-size:9px;color:var(--warn);border:1px solid var(--warn);border-radius:3px;padding:0 4px;white-space:nowrap}
+.chip.ok{color:var(--up);border-color:var(--up)} .chip.bad{color:var(--down);border-color:var(--down)}
+.chip.info{color:var(--info);border-color:var(--info)} .chip.dim{color:var(--dim2);border-color:var(--line2)}
+.up{color:var(--up)} .down{color:var(--down)} .warn{color:var(--warn)} .dim{color:var(--dim)} .dim2{color:var(--dim2)} .info{color:var(--info)}
+.ra{text-align:right}
+.note{font-size:11.5px;color:var(--dim);line-height:1.55}
+.small{font-size:10.5px;color:var(--dim2)}
+
+#head{grid-area:head;height:56px;display:flex;align-items:center;gap:18px;padding:0 14px}
+#nav{display:flex;gap:4px;padding-right:14px;border-right:1px solid var(--line)}
+#nav a{padding:5px 11px;border:1px solid var(--line2);border-radius:4px;color:var(--dim);text-decoration:none;font-size:11px;font-weight:600;white-space:nowrap}
+#nav a:hover{color:var(--fg)} #nav a.on{background:var(--sel);border-color:var(--info);color:var(--fg)}
+#title{font-size:15px;font-weight:700} #title small{font-size:11px;color:var(--dim);font-weight:400;margin-left:8px}
+.tabs{display:flex;gap:4px}
+.tab{padding:3px 10px;border-radius:4px;border:1px solid var(--line2);background:transparent;color:var(--dim);cursor:pointer;font-size:11px;white-space:nowrap;font-weight:600}
+.tab.on{background:var(--sel);border-color:var(--info);color:var(--fg)}
+#hstat{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:11.5px;color:var(--dim);white-space:nowrap}
+.badge{padding:4px 12px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid var(--line2);color:var(--dim);white-space:nowrap}
+.badge.on{border-color:var(--up);color:var(--up)} .badge.dead{border-color:var(--down);color:var(--down)}
+
+#alert{grid-area:alert;display:flex;flex-direction:column;gap:6px} #alert:empty{display:none}
+.al{min-height:36px;padding:8px 14px;border-radius:var(--r);font-weight:600;font-size:12.5px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.al.warn{background:color-mix(in srgb,var(--warn) 13%,var(--panel));border:1px solid var(--warn);color:var(--warn)}
+.al.crit{background:var(--crit);border:1px solid var(--down);color:var(--down)}
+.al .d{font-weight:400;opacity:.85;font-size:11.5px}
+
+#cards{grid-area:cards;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.card{border:1px solid var(--line);border-radius:var(--r);background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.card .t{margin:0 0 4px}
+.card .big{font-size:22px;font-weight:700;line-height:1.1;white-space:nowrap}
+.card .big small{font-size:11px;font-weight:400;color:var(--dim2)}
+.card .sub{font-size:10.5px;color:var(--dim2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#charts{grid-area:charts;display:grid;grid-template-columns:2fr 1fr;gap:8px}
+.chart{display:flex;flex-direction:column;gap:4px;min-width:0}
+.chart .t{margin:0}
+.cw{position:relative;height:210px} .cw canvas{position:absolute;inset:0;width:100%;height:100%}
+
+#groups{grid-area:groups;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.gcols,.grow{display:grid;grid-template-columns:minmax(80px,1fr) 40px 52px 66px 52px 60px;gap:6px;align-items:center;font-size:11.5px}
+.gcols span{font-size:10px;letter-spacing:.06em;color:var(--dim2);text-transform:uppercase}
+.gcols{border-bottom:1px solid var(--line);padding-bottom:3px}
+.grow{height:24px;border-top:1px solid var(--line)} .grow:first-of-type{border-top:0}
+.grow b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#trades{grid-area:trades;display:flex;flex-direction:column;min-height:280px;padding:0}
+#thead{display:flex;align-items:center;gap:10px;padding:8px 10px 6px;flex-wrap:wrap} #thead .t{margin:0}
+#tstat{margin-left:auto;font-size:10.5px;color:var(--dim2)}
+#tbody{flex:1 1 auto;overflow:auto;max-height:60vh}
+.tcols,.trow{display:grid;grid-template-columns:70px 108px 108px 92px 52px 44px 74px 74px 62px 58px 60px 66px 80px 100px minmax(160px,1fr);gap:8px;padding:0 10px;align-items:center;min-width:1260px}
+.tcols{padding-bottom:4px;border-bottom:1px solid var(--line)}
+.tcols span{font-size:10px;letter-spacing:.06em;color:var(--dim2);text-transform:uppercase}
+.trow{height:28px;border-top:1px solid var(--line);font-size:11.5px;white-space:nowrap}
+.trow .why{overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+.trow.open{background:color-mix(in srgb,var(--sel) 50%,transparent)}
+.btn{height:24px;padding:0 10px;border:1px solid var(--line2);border-radius:4px;background:transparent;color:var(--dim);cursor:pointer;font-size:11px}
+#symf{height:24px;border:1px solid var(--line2);border-radius:4px;background:var(--panel2);padding:0 8px;font-size:11px;color:var(--fg)}
+#foot{grid-area:foot;height:26px;display:flex;align-items:center;gap:18px;font-size:11px;color:var(--dim2);padding:0 6px;white-space:nowrap;overflow:hidden}
+#foot b{color:var(--dim);font-weight:600}
+@media (max-width:1000px){
+  #head{height:auto;flex-wrap:wrap;padding:8px 12px}
+  #cards{grid-template-columns:repeat(3,minmax(0,1fr))} #charts{grid-template-columns:1fr} #groups{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="head" class="panel">
+    <nav id="nav"><a href="/">대시보드</a><a href="/backtests">백테스트</a><a class="on" href="/history">매매기록</a></nav>
+    <div id="title">페이퍼 매매기록 <small id="tsub">닫힌 브래킷 전부 · 체결된 것만 셈</small></div>
+    <div class="tabs" id="setuptabs">
+      <button class="tab on" data-setup="all">전체</button>
+      <button class="tab" data-setup="auto">자동 (엔진)</button>
+      <button class="tab" data-setup="manual">손주문</button>
+    </div>
+    <select id="symf"><option value="">모든 종목</option></select>
+    <div id="hstat"><span id="hopen">—</span><span class="badge" id="hbadge">연결 중</span></div>
+  </div>
+  <div id="alert"></div>
+
+  <div id="cards">
+    <div class="card"><span class="t">매매 · 승률</span><div class="big" id="c_n">—</div><div class="sub" id="c_n2">—</div></div>
+    <div class="card"><span class="t">기대값 / 매매</span><div class="big" id="c_exp">—</div><div class="sub" id="c_exp2">—</div></div>
+    <div class="card"><span class="t">누적 R · PF</span><div class="big" id="c_sum">—</div><div class="sub" id="c_sum2">—</div></div>
+    <div class="card"><span class="t">누적 손익 (USDT)</span><div class="big" id="c_pnl">—</div><div class="sub" id="c_pnl2">—</div></div>
+    <div class="card"><span class="t">MDD · 최대 연패</span><div class="big" id="c_mdd">—</div><div class="sub" id="c_mdd2">—</div></div>
+    <div class="card"><span class="t">평균 보유 · 롱/숏</span><div class="big" id="c_hold">—</div><div class="sub" id="c_hold2">—</div></div>
+  </div>
+
+  <div id="charts">
+    <div class="panel chart"><span class="t">누적 R (청산 시각 순)</span><div class="cw"><canvas id="c_curve"></canvas></div></div>
+    <div class="panel chart"><span class="t">일별 R (KST)</span><div class="cw"><canvas id="c_daily"></canvas></div></div>
+  </div>
+
+  <div id="groups">
+    <div class="panel"><span class="t">종목별</span><div id="g_sym"></div></div>
+    <div class="panel"><span class="t">방향별 · 자동/손주문</span><div id="g_dir"></div></div>
+    <div class="panel"><span class="t">청산 사유별</span><div id="g_reason"></div></div>
+  </div>
+
+  <div id="trades" class="panel">
+    <div id="thead"><span class="t">매매 목록</span><button class="btn" id="csv">CSV 내려받기</button><span id="tstat">—</span></div>
+    <div id="tbody"><div class="note" style="padding:8px 10px">—</div></div>
+  </div>
+
+  <div id="foot"><span id="fconn">—</span><span id="fmode">—</span><span>R = 실현손익 ÷ (손절폭 × 전체 수량) · 체결 없이 만료된 브래킷은 매매로 세지 않음</span></div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const nf = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? "—"
+  : Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+const pf = (v, d = 1) => v == null ? "—" : nf(v * 100, d) + "%";
+const sf = (v, d = 2, unit = "") => v == null ? "—" : (v > 0 ? "+" : "") + nf(v, d) + unit;
+const rTxt = (v, d = 2) => v == null ? "—" : (v > 0 ? "+" : "") + nf(v, d) + "R";
+const rCls = (v) => v == null ? "dim" : v > 0 ? "up" : v < 0 ? "down" : "";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c] || c));
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const p2 = (n) => String(n).padStart(2, "0");
+const dtf = (iso) => { if (!iso) return "—"; const d = new Date(iso); return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+const REASON = {EMA20_CROSS:"20선 청산", TIME:"시간 만료", STOP:"손절", TP1:"익절1", TP2:"익절2", WEB_CLOSE:"웹 청산", MANUAL:"수동 청산", EXPIRED:"만료(미체결)"};
+const rk = (k) => REASON[k] || k || "—";
+const S = {data:null, setup:"all", sym:"", health:null, lastJson:""};
+
+function paintHead(){
+  const h = S.health, b = $("hbadge");
+  if (!h){ b.textContent = "연결 안 됨"; b.className = "badge dead"; }
+  else { b.textContent = h.mode === "paper" ? "PAPER · 돈이 나가지 않음" : String(h.mode).toUpperCase(); b.className = "badge " + (h.mode === "paper" ? "on" : ""); }
+  $("fmode").textContent = h ? `TH_EXECUTION_MODE=${h.mode}` : "—";
+  const a = [];
+  if (h && !(Number(h.ui) >= 3)) a.push(["crit", "서버가 옛 버전입니다", "`th serve` 를 껐다가 다시 켜세요"]);
+  const d = S.data;
+  if (d && d.available === false) a.push(["warn", "기록을 못 읽었습니다", d.message_ko || ""]);
+  else if (d && d.summary && !d.summary.enough_sample && d.summary.n > 0) a.push(["warn", `표본 ${d.summary.n}건 — ${d.min_sample}건 미만이라 승률·기대값을 믿지 마세요`, "숫자는 보이지만 판단 근거로 쓰기엔 이릅니다"]);
+  $("alert").innerHTML = a.map(([c, t, x]) => `<div class="al ${c}"><span>${esc(t)}</span><span class="d">${esc(x)}</span></div>`).join("");
+}
+
+function filtered(){
+  const d = S.data; if (!d || !d.items) return [];
+  return d.items.filter(i => (S.setup === "all" || (S.setup === "auto") === !!i.auto) && (!S.sym || i.symbol === S.sym));
+}
+/* 종목 필터를 걸면 서버 집계를 그대로 못 쓴다 — 그때만 여기서 다시 센다 (정의는 같다) */
+function stats(items){
+  const done = items.filter(i => i.filled);
+  if (!done.length) return {n:0, unfilled: items.length};
+  const rs = done.map(i => i.realized_r), wins = rs.filter(r => r > 0), losses = rs.filter(r => r <= 0);
+  const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
+  const sd = rs.length > 2 ? Math.sqrt(rs.reduce((a, b) => a + (b - mean) ** 2, 0) / (rs.length - 1)) : null;
+  const chron = done.slice().sort((a, b) => Date.parse(a.exit_at) - Date.parse(b.exit_at));
+  let cum = 0, peak = 0, mdd = 0, streak = 0, worst = 0;
+  for (const i of chron){ cum += i.realized_r; peak = Math.max(peak, cum); mdd = Math.max(mdd, peak - cum); streak = i.realized_r <= 0 ? streak + 1 : 0; worst = Math.max(worst, streak); }
+  const held = done.filter(i => i.held_min != null);
+  return {n: done.length, unfilled: items.length - done.length, wins: wins.length, win: wins.length / rs.length,
+    sum_r: rs.reduce((a, b) => a + b, 0), exp_r: mean, se: sd ? sd / Math.sqrt(rs.length) : null,
+    pf: losses.length && losses.reduce((a, b) => a + b, 0) < 0 ? wins.reduce((a, b) => a + b, 0) / -losses.reduce((a, b) => a + b, 0) : null,
+    avg_win_r: wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : null,
+    avg_loss_r: losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : null,
+    mdd_r: mdd, max_loss_streak: worst, sum_pnl: done.reduce((a, i) => a + i.realized_pnl, 0), fees: done.reduce((a, i) => a + i.fees, 0),
+    avg_hold_min: held.length ? held.reduce((a, i) => a + i.held_min, 0) / held.length : null,
+    longs: done.filter(i => i.direction === "LONG").length, shorts: done.filter(i => i.direction === "SHORT").length,
+    enough_sample: done.length >= ((S.data && S.data.min_sample) || 30)};
+}
+function paintCards(s){
+  const set = (id, v) => { $(id).innerHTML = v; };
+  if (!s || !s.n){
+    for (const id of ["c_n", "c_exp", "c_sum", "c_pnl", "c_mdd", "c_hold"]) set(id, "—");
+    for (const id of ["c_n2", "c_exp2", "c_sum2", "c_pnl2", "c_mdd2", "c_hold2"]) set(id, "매매 없음");
+    if (s && s.unfilled) set("c_n2", `미체결 만료 ${s.unfilled}건`);
+    return;
+  }
+  set("c_n", `${s.n} <small>· ${pf(s.win)}</small>`); set("c_n2", `승 ${s.wins} · 패 ${s.n - s.wins}${s.unfilled ? ` · 미체결 만료 ${s.unfilled}` : ""}`);
+  set("c_exp", `<span class="${rCls(s.exp_r)}">${rTxt(s.exp_r, 3)}</span>`); set("c_exp2", `±${s.se == null ? "—" : nf(s.se, 3)} (표준오차) · 승 평균 ${rTxt(s.avg_win_r)} · 패 평균 ${rTxt(s.avg_loss_r)}`);
+  set("c_sum", `<span class="${rCls(s.sum_r)}">${rTxt(s.sum_r, 2)}</span> <small>· PF ${s.pf == null ? "∞" : nf(s.pf, 2)}</small>`); set("c_sum2", s.enough_sample ? "표본 30건 이상" : `표본 ${s.n}건 — 30건 미만`);
+  set("c_pnl", `<span class="${rCls(s.sum_pnl)}">${sf(s.sum_pnl, 2)}</span>`); set("c_pnl2", `수수료·슬리피지 포함 · 비용 ${nf(s.fees, 2)} USDT`);
+  set("c_mdd", `<span class="down">${nf(s.mdd_r, 2)}R</span> <small>· ${s.max_loss_streak}연패</small>`); set("c_mdd2", "고점 대비 누적 R 최대 하락");
+  set("c_hold", `${s.avg_hold_min == null ? "—" : Math.round(s.avg_hold_min) + "분"} <small>· ${s.longs}/${s.shorts}</small>`); set("c_hold2", "진입 체결 → 마지막 청산 체결");
+}
+function groupRows(groups, label){
+  if (!groups || !groups.length) return `<div class="note">—</div>`;
+  return `<div class="gcols"><span>${esc(label)}</span><span class="ra">n</span><span class="ra">승률</span><span class="ra">기대값</span><span class="ra">PF</span><span class="ra">누적</span></div>`
+    + groups.map(g => `<div class="grow"><b>${esc(g.label || g.key)}</b><span class="ra">${g.n || 0}</span><span class="ra">${g.n ? pf(g.win) : "—"}</span><span class="ra ${rCls(g.exp_r)}">${g.n ? rTxt(g.exp_r, 3) : "—"}</span><span class="ra">${g.n ? (g.pf == null ? "∞" : nf(g.pf, 2)) : "—"}</span><span class="ra ${rCls(g.sum_r)}">${g.n ? rTxt(g.sum_r, 2) : "—"}</span></div>`).join("");
+}
+function groupBy(items, key, labelOf){
+  const m = {};
+  for (const i of items) (m[key(i)] = m[key(i)] || []).push(i);
+  return Object.keys(m).sort().map(k => Object.assign({key: k, label: labelOf ? labelOf(k) : k}, stats(m[k])));
+}
+function paintGroups(items){
+  $("g_sym").innerHTML = groupRows(groupBy(items, i => i.symbol), "종목");
+  const dir = groupBy(items, i => i.direction);
+  const kind = groupBy(items, i => i.auto ? "자동 (엔진)" : "손주문");
+  $("g_dir").innerHTML = groupRows(dir.concat(kind), "구분");
+  $("g_reason").innerHTML = groupRows(groupBy(items, i => i.close_reason || "?", rk), "사유");
+}
+function paintTrades(items){
+  const d = S.data;
+  const open = (d && d.open || []).filter(o => (S.setup === "all" || (S.setup === "auto") === !!o.auto) && (!S.sym || o.symbol === S.sym));
+  $("tstat").textContent = `${items.length}건 (닫힘) · 열림 ${open.length}`;
+  $("hopen").textContent = d && d.open ? `열린 브래킷 ${d.open.length}` : "";
+  if (!items.length && !open.length){ $("tbody").innerHTML = `<div class="note" style="padding:8px 10px">아직 닫힌 페이퍼 매매가 없습니다. 대시보드의 주문 패널이나 시그널 엔진이 브래킷을 열고 닫으면 여기 쌓입니다.</div>`; return; }
+  const head = `<div class="tcols"><span>#</span><span>진입</span><span>청산</span><span>종목</span><span>방향</span><span>구분</span><span class="ra">진입가</span><span class="ra">청산가</span><span class="ra">변동%</span><span class="ra">손절폭</span><span class="ra">보유</span><span class="ra">R</span><span class="ra">손익</span><span>사유</span><span>근거</span></div>`;
+  const rows = open.map(o => `<div class="trow open"><span class="dim2">${esc(o.id)}</span><span class="dim">${dtf(o.since)}</span><span class="info">열림</span><span><b>${esc(o.symbol)}</b></span><span class="${o.direction === "LONG" ? "up" : "down"}"><b>${esc(o.direction)}</b></span><span>${o.auto ? `<span class="chip info">자동</span>` : `<span class="chip dim">손</span>`}</span><span class="ra">${o.entry == null ? "대기" : nf(o.entry, 2)}</span><span class="ra">—</span><span class="ra">—</span><span class="ra dim">${o.entry && o.stop ? nf(Math.abs(o.entry - o.stop) / o.entry * 100, 2) + "%" : "—"}</span><span class="ra">—</span><span class="ra">—</span><span class="ra">—</span><span>${o.has_position ? "포지션 보유" : "진입 대기"}</span><span class="why"></span></div>`)
+    .concat(items.map(i => `<div class="trow"><span class="dim2">${esc(i.id)}</span><span class="dim">${dtf(i.entry_at)}</span><span class="dim">${dtf(i.exit_at)}</span><span><b>${esc(i.symbol)}</b></span><span class="${i.direction === "LONG" ? "up" : "down"}"><b>${esc(i.direction)}</b></span><span>${i.auto ? `<span class="chip info">자동</span>` : `<span class="chip dim">손</span>`}</span>`
+      + `<span class="ra">${i.entry == null ? "—" : nf(i.entry, i.entry >= 1000 ? 1 : 2)}</span><span class="ra">${i.exit == null ? "—" : nf(i.exit, i.exit >= 1000 ? 1 : 2)}</span><span class="ra ${rCls(i.move_pct)}">${sf(i.move_pct, 2, "%")}</span><span class="ra dim">${i.stop_pct == null ? "—" : nf(i.stop_pct, 2) + "%"}</span><span class="ra dim">${i.held_min == null ? "—" : Math.round(i.held_min) + "분"}</span>`
+      + `<span class="ra ${rCls(i.realized_r)}"><b>${i.filled ? rTxt(i.realized_r, 2) : "—"}</b></span><span class="ra ${rCls(i.realized_pnl)}">${i.filled ? sf(i.realized_pnl, 2) : "—"}</span><span class="dim">${esc(rk(i.close_reason))}</span><span class="why" title="${esc(i.reason)}">${esc(i.reason)}</span></div>`));
+  $("tbody").innerHTML = head + rows.join("");
+}
+function paintAll(){
+  const items = filtered();
+  const s = (S.setup === "all" && !S.sym && S.data && S.data.summary) ? S.data.summary : stats(items);
+  paintCards(s); paintGroups(items); paintTrades(items); drawCurve(items); drawDaily(items); paintHead();
+}
+
+/* ── 차트 ─────────────────────────────────────────── */
+function setupCanvas(id){
+  const c = $(id); if (!c) return null;
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  const ctx = c.getContext("2d"); ctx.scale(dpr, dpr); ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
+  return {ctx, w, h};
+}
+function drawCurve(items){
+  const s = setupCanvas("c_curve"); if (!s) return;
+  const {ctx, w, h} = s;
+  ctx.clearRect(0, 0, w, h);
+  const done = items.filter(i => i.filled).sort((a, b) => Date.parse(a.exit_at) - Date.parse(b.exit_at));
+  const PL = 44, PR = 10, PT = 8, PB = 18;
+  if (!done.length){ ctx.fillStyle = css("--dim2"); ctx.fillText("매매 없음", PL, 20); return; }
+  const cum = [0]; for (const i of done) cum.push(cum[cum.length - 1] + i.realized_r);
+  const lo = Math.min(0, ...cum), hi = Math.max(0, ...cum);
+  const X = i => PL + (w - PL - PR) * i / Math.max(1, cum.length - 1);
+  const Y = v => PT + (h - PT - PB) * (1 - (v - lo) / Math.max(1e-9, hi - lo));
+  ctx.strokeStyle = css("--line"); ctx.lineWidth = 1;
+  for (let k = 0; k <= 4; k++){ const y = PT + (h - PT - PB) * k / 4; ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(w - PR, y); ctx.stroke();
+    ctx.fillStyle = css("--dim2"); ctx.textAlign = "right"; ctx.fillText(nf(hi - (hi - lo) * k / 4, 1) + "R", PL - 4, y + 3); }
+  ctx.strokeStyle = css("--dim2"); ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(PL, Y(0)); ctx.lineTo(w - PR, Y(0)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = cum[cum.length - 1] >= 0 ? css("--up") : css("--down"); ctx.lineWidth = 1.6; ctx.beginPath();
+  cum.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))); ctx.stroke();
+  ctx.fillStyle = css("--fg"); for (let i = 1; i < cum.length; i++){ ctx.beginPath(); ctx.arc(X(i), Y(cum[i]), 1.6, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = css("--dim2"); ctx.textAlign = "left"; ctx.fillText(dtf(done[0].exit_at).slice(0, 10), PL, h - 5);
+  ctx.textAlign = "right"; ctx.fillText(dtf(done[done.length - 1].exit_at).slice(0, 10), w - PR, h - 5);
+}
+function drawDaily(items){
+  const s = setupCanvas("c_daily"); if (!s) return;
+  const {ctx, w, h} = s;
+  ctx.clearRect(0, 0, w, h);
+  const done = items.filter(i => i.filled);
+  const PL = 36, PR = 6, PT = 8, PB = 22;
+  if (!done.length){ ctx.fillStyle = css("--dim2"); ctx.fillText("매매 없음", PL, 20); return; }
+  const m = {};
+  for (const i of done){ const d = new Date(i.exit_at); const k = `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`; m[k] = (m[k] || 0) + i.realized_r; }
+  const days = Object.keys(m).sort().slice(-40), vals = days.map(k => m[k]);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const Y = v => PT + (h - PT - PB) * (1 - (v - lo) / Math.max(1e-9, hi - lo));
+  const bw = (w - PL - PR) / days.length;
+  ctx.strokeStyle = css("--line"); ctx.beginPath(); ctx.moveTo(PL, Y(0)); ctx.lineTo(w - PR, Y(0)); ctx.stroke();
+  days.forEach((k, i) => {
+    ctx.fillStyle = m[k] >= 0 ? css("--up") : css("--down");
+    const x0 = PL + bw * i + bw * 0.15, y0 = Y(Math.max(0, m[k])), y1 = Y(Math.min(0, m[k]));
+    ctx.fillRect(x0, y0, bw * 0.7, Math.max(1, y1 - y0));
+    if (days.length <= 10 || i % Math.ceil(days.length / 8) === 0){ ctx.fillStyle = css("--dim2"); ctx.textAlign = "center"; ctx.fillText(k.slice(5), PL + bw * i + bw / 2, h - 8); }
+  });
+  ctx.fillStyle = css("--dim2"); ctx.textAlign = "right"; ctx.fillText(nf(hi, 1) + "R", PL - 3, PT + 8); ctx.fillText(nf(lo, 1) + "R", PL - 3, h - PB);
+}
+
+/* ── CSV ──────────────────────────────────────────── */
+function downloadCsv(){
+  const items = filtered();
+  const cols = ["id", "symbol", "direction", "auto", "entry_at", "exit_at", "held_min", "entry", "exit", "qty", "stop", "stop_pct", "move_pct", "realized_r", "realized_pnl", "fees", "close_reason", "reason"];
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const txt = [cols.join(",")].concat(items.map(i => cols.map(c => q(i[c])).join(","))).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + txt], {type: "text/csv;charset=utf-8"}));
+  a.download = `paper_history_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ── 배선 ─────────────────────────────────────────── */
+async function load(force){
+  let j;
+  try{ j = await (await fetch("/api/history?limit=5000")).json(); $("fconn").innerHTML = `<b>서버</b> 연결됨`; }
+  catch(e){ $("fconn").innerHTML = `<b>서버</b> <span class="down">연결 안 됨</span>`; return; }
+  const txt = JSON.stringify(j);
+  if (!force && txt === S.lastJson) return;
+  S.lastJson = txt; S.data = j;
+  const syms = [...new Set((j.items || []).map(i => i.symbol).concat((j.open || []).map(o => o.symbol)))].sort();
+  const sel = $("symf"), cur = sel.value;
+  sel.innerHTML = `<option value="">모든 종목</option>` + syms.map(s => `<option value="${esc(s)}"${s === cur ? " selected" : ""}>${esc(s)}</option>`).join("");
+  paintAll();
+}
+async function loadHealth(){
+  try{ S.health = await (await fetch("/api/health")).json(); }catch(e){ S.health = null; }
+  paintHead();
+}
+$("setuptabs").addEventListener("click", ev => { const b = ev.target.closest("[data-setup]"); if (!b) return;
+  S.setup = b.dataset.setup; for (const x of $("setuptabs").children) x.classList.toggle("on", x === b); paintAll(); });
+$("symf").addEventListener("change", () => { S.sym = $("symf").value; paintAll(); });
+$("csv").addEventListener("click", downloadCsv);
+window.addEventListener("resize", () => { const items = filtered(); drawCurve(items); drawDaily(items); });
+(async () => { await loadHealth(); await load(true); setInterval(() => load(false), 5000); setInterval(loadHealth, 15000); })();
+</script>
+</body>
+</html>

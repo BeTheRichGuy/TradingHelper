@@ -1,0 +1,93 @@
+<title>SOXLUSDT 백테스트 리포트</title>
+<style>
+:root{--bg:#fbfaf9;--fg:#1c1a17;--dim:#6b6560;--line:#e3ded8;--card:#fff;
+--ok:#0f7a4d;--bad:#b3341f;--accent:#3a5ba0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans KR',sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:15px;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.sub{color:var(--dim);margin:0 0 28px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card .k{color:var(--dim);font-size:12px}
+.card .v{font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;background:var(--card);
+border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{padding:8px 12px;text-align:right;border-bottom:1px solid var(--line);
+font-variant-numeric:tabular-nums}
+th:first-child,td:first-child{text-align:left}
+th{background:#f4f1ed;font-weight:600;color:var(--dim);font-size:12px}
+tr:last-child td{border-bottom:0}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--dim)}
+.scroll{overflow-x:auto}
+.note{background:#fff8e6;border:1px solid #f0e0b0;border-radius:8px;padding:12px 16px;margin:16px 0}
+svg{background:var(--card);border:1px solid var(--line);border-radius:8px;max-width:100%}
+@media (prefers-color-scheme:dark){:root{--bg:#16150f;--fg:#f0ece4;--dim:#a09a90;
+--line:#33302a;--card:#1f1e17;--ok:#5fcf9a;--bad:#f08a72}
+th{background:#26241d}.note{background:#2a2415;border-color:#4a4028}}
+</style>
+<div class="wrap">
+<h1>SOXLUSDT 백테스트</h1>
+<p class="sub">2026-08-01 ~ 2026-09-01 · 생성 2026-09-07 16:22 ·
+평가 1,638 · 게이트 차단 168 · 필터 탈락 224 · 신호 6</p>
+
+<div class="cards"><div class="card"><div class="k">판정 (OOS 기준)</div><div class="v"><span class="bad">불합격</span></div></div><div class="card"><div class="k">OOS 기대값</div><div class="v">+0.738R</div></div><div class="card"><div class="k">OOS 표본</div><div class="v">3</div></div><div class="card"><div class="k">전체 트레이드</div><div class="v">5</div></div><div class="card"><div class="k">전체 누적</div><div class="v">+3.7R</div></div><div class="card"><div class="k">비용이 먹은 몫</div><div class="v">0.8R</div></div></div>
+
+<div class="note"><b>basis 커버리지 4%</b> — 본주(SOXL) 가격이 없는 구간에서는 S1-8·괴리 필터가 '데이터 없음 = 미충족'으로 처리됐습니다. 커버리지가 낮으면 이 백테스트는 basis 조건을 사실상 끄고 돌린 결과입니다. Alpaca 어댑터를 붙이면 이 값이 올라갑니다.</div>
+
+<h2>통과 기준 — out-of-sample 성적으로만 판정</h2>
+<div class="scroll"><table>
+<thead><tr><th>항목</th><th></th><th>결과</th></tr></thead>
+<tbody><tr><td>기대값 ≥ +0.20R</td><td><span class=ok>✓</span></td><td>+0.738R (비용 차감 후)</td></tr><tr><td>표본 ≥ 300</td><td><span class=bad>✗</span></td><td>3트레이드</td></tr><tr><td>최대낙폭 ≤ 총수익의 40%</td><td><span class=bad>✗</span></td><td>낙폭 1.3R / 총수익 +2.2R = 58%</td></tr><tr><td>RTH 단독으로도 양수</td><td><span class=ok>✓</span></td><td>RTH +0.738R (3건)</td></tr><tr><td>최대 연속 손절 ≤ 6</td><td><span class=ok>✓</span></td><td>1회 연속</td></tr></tbody></table></div>
+<p class="dim">in-sample 성적은 참고용입니다. 같은 데이터로 만들고 같은 데이터로
+채점하면 언제나 좋아 보입니다.</p>
+
+<h2>구간별 성적</h2>
+<div class="scroll"><table><thead><tr><th>구간</th><th>표본</th><th>승률 (95% CI)</th><th>기대값</th><th>누적</th><th>최대낙폭</th><th>PF</th></tr></thead><tbody><tr><td>전체</td><td>5</td><td>60% <span class='dim'>(23%~88%)</span></td><td><span class="ok">+0.734R</span></td><td><span class="ok">+3.7R</span></td><td>2.6R</td><td>2.41</td></tr><tr><td>in-sample</td><td>2</td><td>50% <span class='dim'>(9%~91%)</span></td><td><span class="ok">+0.728R</span></td><td><span class="ok">+1.5R</span></td><td>1.3R</td><td>2.11</td></tr><tr><td>out-of-sample</td><td>3</td><td>67% <span class='dim'>(21%~94%)</span></td><td><span class="ok">+0.738R</span></td><td><span class="ok">+2.2R</span></td><td>1.3R</td><td>2.72</td></tr></tbody></table></div>
+<p class="dim">경계에 물린 0건은 양쪽 어디에도 넣지 않고 버렸습니다(purge).
+진입~청산 구간이 경계를 넘으면 검증 구간의 가격이 학습 쪽으로 새어 들어갑니다.</p>
+
+<h2>누적 손익 (R)</h2>
+<svg viewBox="0 0 1000 240" width="100%" height="240" role="img" aria-label="누적 손익 곡선"><polygon points="32,208.0 32.0,75.1 266.0,138.2 500.0,199.7 734.0,69.9 968.0,32.0 968.0,208.0" fill="#3a5ba0" opacity="0.12"/><line x1="32" y1="208.0" x2="968" y2="208.0" stroke="currentColor" stroke-opacity="0.25" stroke-dasharray="3 3"/><polyline points="32.0,75.1 266.0,138.2 500.0,199.7 734.0,69.9 968.0,32.0" fill="none" stroke="#3a5ba0" stroke-width="2"/><text x="32" y="22" font-size="11" fill="currentColor" opacity="0.6">+3.7R</text><text x="32" y="232" font-size="11" fill="currentColor" opacity="0.6">+0.0R</text></svg>
+<p class="dim">TP1 도달까지 중앙값 <b>15분</b> (사분위 12~24분) · 보유시간 중앙값 <b>59분</b> (사분위 53~87분)</p>
+
+<h2>R 분포</h2>
+<svg viewBox="0 0 1000 220" width="100%" height="220" role="img" aria-label="R 분포"><rect x="33.0" y="32.0" width="44.8" height="156.0" fill="#b3341f" opacity="0.75"/><rect x="79.8" y="188.0" width="44.8" height="0.0" fill="#b3341f" opacity="0.75"/><rect x="126.6" y="188.0" width="44.8" height="0.0" fill="#b3341f" opacity="0.75"/><rect x="173.4" y="188.0" width="44.8" height="0.0" fill="#b3341f" opacity="0.75"/><rect x="220.2" y="188.0" width="44.8" height="0.0" fill="#b3341f" opacity="0.75"/><rect x="267.0" y="188.0" width="44.8" height="0.0" fill="#b3341f" opacity="0.75"/><rect x="313.8" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="360.6" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="407.4" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="454.2" y="110.0" width="44.8" height="78.0" fill="#0f7a4d" opacity="0.75"/><rect x="501.0" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="547.8" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="594.6" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="641.4" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="688.2" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="735.0" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="781.8" y="110.0" width="44.8" height="78.0" fill="#0f7a4d" opacity="0.75"/><rect x="828.6" y="110.0" width="44.8" height="78.0" fill="#0f7a4d" opacity="0.75"/><rect x="875.4" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><rect x="922.2" y="188.0" width="44.8" height="0.0" fill="#0f7a4d" opacity="0.75"/><text x="32" y="212" font-size="11" fill="currentColor" opacity="0.6">-1.5R</text><text x="968" y="212" font-size="11" text-anchor="end" fill="currentColor" opacity="0.6">+3.5R</text></svg>
+
+<h2>세션 레짐별</h2>
+<div class="scroll"><table><thead><tr><th>레짐</th><th>표본</th><th>승률 (95% CI)</th><th>기대값</th><th>누적</th><th>최대낙폭</th><th>PF</th></tr></thead><tbody><tr><td>RTH</td><td>5</td><td>60% <span class='dim'>(23%~88%)</span></td><td><span class="ok">+0.734R</span></td><td><span class="ok">+3.7R</span></td><td>2.6R</td><td>2.41</td></tr></tbody></table></div>
+
+<h2>셋업별</h2>
+<div class="scroll"><table><thead><tr><th>셋업</th><th>표본</th><th>승률 (95% CI)</th><th>기대값</th><th>누적</th><th>최대낙폭</th><th>PF</th></tr></thead><tbody><tr><td>S1_vwap_pullback</td><td>3</td><td>67% <span class='dim'>(21%~94%)</span></td><td><span class="ok">+0.738R</span></td><td><span class="ok">+2.2R</span></td><td>1.3R</td><td>2.72</td></tr><tr><td>S3_sweep_reversal</td><td>2</td><td>50% <span class='dim'>(9%~91%)</span></td><td><span class="ok">+0.728R</span></td><td><span class="ok">+1.5R</span></td><td>1.3R</td><td>2.11</td></tr></tbody></table></div>
+
+<h2>워크포워드</h2>
+<div class="scroll"><table>
+<thead><tr><th>구간</th><th>학습 표본</th><th>학습 기대값</th>
+<th>검증 표본</th><th>검증 기대값</th></tr></thead>
+<tbody><tr><td>구간 1</td><td>1</td><td><span class="ok">+2.772R</span></td><td>1</td><td><span class="bad">-1.315R</span></td></tr><tr><td>구간 2</td><td>2</td><td><span class="ok">+0.728R</span></td><td>2</td><td><span class="ok">+0.712R</span></td></tr><tr><td>구간 3</td><td>4</td><td><span class="ok">+0.720R</span></td><td>1</td><td><span class="ok">+0.790R</span></td></tr></tbody>
+</table></div>
+
+<h2>청산 사유 · 거래 무산 사유</h2>
+<div class="cards">
+<div class="scroll"><table><thead><tr><th>청산 사유</th><th>건수</th></tr></thead>
+<tbody><tr><td>breakeven</td><td>1</td></tr><tr><td>stop</td><td>2</td></tr><tr><td>tp2</td><td>2</td></tr></tbody></table></div>
+<div class="scroll"><table><thead><tr><th>거래 무산</th><th>건수</th></tr></thead>
+<tbody><tr><td>overlap</td><td>1</td></tr></tbody></table></div>
+</div>
+<p class="dim"><b>no_fill</b> = 신호는 났지만 진입 트리거에 3봉 안에 안 닿음.
+<b>overlap</b> = 앞 포지션 보유 중이라 건너뜀. 둘 다 실전에서 실제로 일어나는 일이라
+성과에서 빼지 않고 따로 셉니다.</p>
+
+<h2>최근 트레이드 5건</h2>
+<div class="scroll"><table>
+<thead><tr><th>진입</th><th>셋업</th><th>방향</th><th>점수</th><th>체결가</th>
+<th>손절</th><th>청산</th><th>보유</th><th>손익</th></tr></thead>
+<tbody><tr><td>2026-08-03 16:55</td><td>S3_sweep_reversal</td><td>롱</td><td>55</td><td>113.3</td><td>112.6</td><td>tp2</td><td>53분</td><td><span class="ok">+2.77R</span></td></tr><tr><td>2026-08-11 17:30</td><td>S3_sweep_reversal</td><td>롱</td><td>55</td><td>130.9</td><td>130.2</td><td>stop</td><td>59분</td><td><span class="bad">-1.32R</span></td></tr><tr><td>2026-08-21 15:45</td><td>S1_vwap_pullback</td><td>숏</td><td>65</td><td>119.9</td><td>120.5</td><td>stop</td><td>5분</td><td><span class="bad">-1.28R</span></td></tr><tr><td>2026-08-21 15:55</td><td>S1_vwap_pullback</td><td>숏</td><td>65</td><td>120.5</td><td>121.1</td><td>tp2</td><td>87분</td><td><span class="ok">+2.71R</span></td></tr><tr><td>2026-08-27 17:55</td><td>S1_vwap_pullback</td><td>숏</td><td>65</td><td>121</td><td>121.8</td><td>breakeven</td><td>100분</td><td><span class="ok">+0.79R</span></td></tr></tbody>
+</table></div>
+
+<p class="dim" style="margin-top:40px">이 숫자는 과거에 대한 것입니다. 미래 수익을
+보장하지 않으며, 통과했더라도 최소 4주는 신호를 보되 그대로 따라 하지 않는 기간을
+둡니다 (04 문서).</p>
+</div>

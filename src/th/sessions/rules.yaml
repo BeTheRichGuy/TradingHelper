@@ -1,0 +1,169 @@
+# 세션·이벤트 규칙 — 05-세션-이벤트-타임맵 문서의 4·5절을 그대로 옮긴 것.
+#
+# 규칙을 코드에 흩뿌리지 않고 여기 한 곳에 둔다. 새 규칙 추가가 데이터 몇 줄이 되도록.
+#
+# ── 필드 ────────────────────────────────────────────────────────────
+# id            고유 이름 (로그·UI에 그대로 나감)
+# action        BLOCK  신호 발행 금지
+#               PENALTY / BOOST  신뢰도 가감 (points 필수)
+#               WARN   배너 문구만
+# reason_ko     사용자에게 보여줄 이유. 반드시 "왜"가 들어가야 한다.
+# sessions      적용 레짐 [PRE, RTH, POST, CLOSED] — 생략하면 전부
+# symbols       적용 심볼 — 생략하면 전부
+# applies_to    PENALTY/BOOST 대상 셋업 분류 [trend, breakout, reversal, mean_reversion]
+#               생략하면 모든 셋업
+# points        PENALTY 는 음수, BOOST 는 양수
+#
+# ── window ──────────────────────────────────────────────────────────
+# 절대 시각 (ET 벽시계):        {start: "11:30", end: "13:30"}
+# 개장/마감 기준 상대 (분):      {anchor: open|close|post_end, start_min: -15, end_min: 0}
+# 하루 종일:                    {all_day: true}
+#
+# anchor 를 쓰면 반휴장일(13:00 ET 마감)에 창이 자동으로 따라간다.
+# 예) 종가 리밸런싱은 평소 15:45–16:00, 반휴장일엔 12:45–13:00.
+#
+# ── 날짜 필터 ────────────────────────────────────────────────────────
+# weekdays            [mon, fri] 등
+# months              [3, 6, 9, 12]
+# nth_weekday         {n: 3, weekday: fri}   셋째 금요일
+# last_trading_days   2   월말 2거래일 이내
+# on_event_kind       fomc | earnings | econ  — 그 종류 이벤트가 있는 날만
+
+rules:
+
+  # ── 본장 시간대 ──────────────────────────────────────────────────
+  - id: opening_15m
+    action: BLOCK
+    sessions: [RTH]
+    window: { anchor: open, start_min: 0, end_min: 15 }
+    reason_ko: "개장 직후 15분 — 밤새 쌓인 주문이 쏟아져 VWAP·EMA가 모두 무의미합니다"
+
+  - id: opening_drive
+    action: BOOST
+    sessions: [RTH]
+    window: { anchor: open, start_min: 15, end_min: 60 }
+    applies_to: [trend, breakout]
+    points: 10
+    reason_ko: "개장 드라이브 구간 — 그날 방향이 잡히는 시간대"
+
+  - id: lunch_lull_breakout
+    action: PENALTY
+    sessions: [RTH]
+    window: { start: "11:30", end: "13:30" }
+    applies_to: [breakout]
+    points: -25
+    reason_ko: "런치 구간 — 거래량이 줄어 돌파가 대부분 실패합니다"
+
+  - id: lunch_lull_meanrev
+    action: BOOST
+    sessions: [RTH]
+    window: { start: "11:30", end: "13:30" }
+    applies_to: [mean_reversion]
+    points: 10
+    reason_ko: "런치 구간 — 레인지가 유지되는 경향"
+
+  - id: power_hour
+    action: BOOST
+    sessions: [RTH]
+    window: { anchor: close, start_min: -60, end_min: -15 }
+    applies_to: [trend]
+    points: 10
+    reason_ko: "파워아워 — 거래량이 다시 늘며 추세가 가속됩니다"
+
+  # ── 경제지표 (정확한 일정은 events.yaml 에서 동적으로 추가 차단) ──
+  - id: econ_0830_window
+    action: BLOCK
+    sessions: [PRE]
+    window: { start: "08:20", end: "08:40" }
+    reason_ko: "08:30 ET 경제지표 발표 창 — CPI·PPI·고용지표가 이 시각에 나옵니다"
+
+  - id: econ_1000_window
+    action: BLOCK
+    sessions: [RTH]
+    window: { start: "09:55", end: "10:05" }
+    reason_ko: "10:00 ET 2차 지표 창 — ISM·소비자신뢰 등이 개장 방향을 뒤집습니다"
+
+  # ── FOMC ────────────────────────────────────────────────────────
+  - id: fomc_statement
+    action: BLOCK
+    on_event_kind: fomc
+    window: { start: "13:30", end: "14:30" }
+    reason_ko: "FOMC 성명 발표 전후 — 초 단위로 방향이 뒤집힙니다"
+
+  - id: fomc_presser
+    action: BLOCK
+    on_event_kind: fomc
+    window: { start: "14:30", end: "15:15" }
+    reason_ko: "파월 기자회견 — 문장 하나에 방향이 두 번 바뀝니다"
+
+  - id: fomc_day_morning
+    action: PENALTY
+    on_event_kind: fomc
+    sessions: [RTH]
+    window: { start: "09:30", end: "13:30" }
+    points: -20
+    reason_ko: "FOMC 당일 오전 — 발표를 기다리며 거래량이 죽어 신호 신뢰도가 낮습니다"
+
+  # ── SOXL 고유 (3배 ETF) ─────────────────────────────────────────
+  - id: etf_close_rebalance
+    action: BLOCK
+    sessions: [RTH]
+    symbols: [SOXLUSDT, SOXSUSDT, TQQQUSDT, SQQQUSDT]
+    window: { anchor: close, start_min: -15, end_min: 0 }
+    reason_ko: "3배 ETF 종가 리밸런싱 구간 — 방향을 가속시키는 수급이지 신호가 아닙니다"
+
+  - id: close_transition
+    action: WARN
+    sessions: [RTH]
+    window: { anchor: close, start_min: -15, end_min: 0 }
+    reason_ko: "본주 마감 15분 전 — 곧 perp 단독 가격으로 넘어가며 괴리가 벌어집니다"
+
+  - id: earnings_reaction
+    action: BLOCK
+    on_event_kind: earnings
+    window: { start: "16:00", end: "16:35" }
+    reason_ko: "실적 발표 반응 구간 — 수 % 갭이 나며 손절이 건너뛰어질 수 있습니다"
+
+  # ── 애프터 · 주말 ────────────────────────────────────────────────
+  - id: post_thin_liquidity
+    action: PENALTY
+    sessions: [POST]
+    window: { all_day: true }
+    points: -15
+    reason_ko: "애프터 구간 — 유동성이 급감해 슬리피지가 커집니다"
+
+  - id: pre_thin_liquidity
+    action: PENALTY
+    sessions: [PRE]
+    window: { all_day: true }
+    points: -10
+    reason_ko: "프리장 구간 — 본주 거래량이 적어 가격 발견이 부분적입니다"
+
+  - id: weekend_gap_warning
+    action: WARN
+    sessions: [POST]
+    weekdays: [fri]
+    window: { anchor: post_end, start_min: -60, end_min: 0 }
+    reason_ko: "주말 진입 60분 전 — 월요일 개장까지 56시간 동안 perp만 가격을 만듭니다. 포지션 축소를 검토하세요"
+
+  # ── 월간·분기 ────────────────────────────────────────────────────
+  - id: quad_witching
+    action: PENALTY
+    nth_weekday: { n: 3, weekday: fri }
+    months: [3, 6, 9, 12]
+    window: { all_day: true }
+    points: -20
+    reason_ko: "쿼드러플 위칭 — 만기 수급이 가격을 특정 대에 묶습니다"
+
+  - id: monthly_opex
+    action: WARN
+    nth_weekday: { n: 3, weekday: fri }
+    window: { all_day: true }
+    reason_ko: "옵션 만기일 — 특정 행사가에 가격이 고정되려는 힘이 작용합니다"
+
+  - id: month_end_rebalance
+    action: WARN
+    sessions: [RTH]
+    last_trading_days: 2
+    window: { anchor: close, start_min: -60, end_min: 0 }
+    reason_ko: "월말 리밸런싱 구간 — 기관 수급이 방향을 왜곡할 수 있습니다"

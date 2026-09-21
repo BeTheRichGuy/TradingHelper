@@ -1,0 +1,71 @@
+# Trading Helper — 로컬 개발과 도쿄 VPS 배포에 같은 파일을 쓴다.
+# 로컬:  docker compose up -d              (DB/Redis만 뜨고, 파이썬은 호스트에서 실행)
+# VPS:   docker compose --profile server up -d   (수집기까지 컨테이너로)
+#
+# 이전이 쉬운 이유: 아래 어디에도 로컬 전용 경로나 비밀값이 없다. .env 파일 하나만 옮기면 된다.
+
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: th-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-th}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_helper}
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - th_pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-th} -d ${POSTGRES_DB:-trading_helper}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=timescaledb
+      - -c
+      - timezone=UTC
+
+  redis:
+    image: redis:7-alpine
+    container_name: th-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ── VPS 전용 ──────────────────────────────────────────────
+  # 로컬에서는 뜨지 않는다 (profile 지정 시에만).
+  # VPS 이전 시: docker compose --profile server up -d --build
+  ingest:
+    profiles: ["server"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: th-ingest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # 컨테이너 안에서는 호스트명이 서비스명이다
+      TH_DB_HOST: db
+      TH_REDIS_HOST: redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["python", "-m", "th.cli", "stream"]
+
+volumes:
+  th_pgdata:

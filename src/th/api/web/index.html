@@ -1,0 +1,1582 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trading Helper</title>
+<style>
+/* 트레이딩 터미널 배치 — 한 화면에 다 띄우고 스크롤하지 않는다.
+   외부 리소스 0. 인터넷이 끊겨도, CDN 이 죽어도 화면은 뜬다.
+   배치·색·간격은 docs/design-Main.dc.html (2026-09-10 승인 디자인) 그대로. */
+:root{
+  --bg:#0b0e13; --panel:#131820; --panel2:#0f141b; --line:#212936; --line2:#2c3646;
+  --fg:#e8eef6; --fg2:#c3ccd8; --dim:#8b98ab; --dim2:#5d6b80;
+  --up:#26c281; --down:#f2495c; --warn:#e0a33e; --info:#4f9df0; --mute:#3c4759; --ema99:#6b7a90;
+  --sel:#1a2230; --crit:#2a1a1f;
+  --r:6px;
+}
+@media (prefers-color-scheme: light){
+  :root{ --bg:#eef1f5; --panel:#fff; --panel2:#f7f9fc; --line:#dde3ec; --line2:#c9d3e0;
+         --fg:#151a21; --fg2:#2b3442; --dim:#5c6879; --dim2:#8996a8;
+         --up:#0f9960; --down:#d63447; --warn:#a8710a; --info:#1668c9; --mute:#aab6c6; --ema99:#8996a8;
+         --sel:#e4ecf7; --crit:#fbe9ec; }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--fg);overflow:hidden;
+  font:13px/1.45 ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,
+       "Apple SD Gothic Neo","Malgun Gothic",monospace;
+  font-variant-numeric:tabular-nums;
+}
+button,input{font:inherit;color:inherit}
+#app{
+  height:100dvh;display:grid;gap:8px;padding:8px;
+  grid-template-columns:272px minmax(0,1fr) 372px;
+  grid-template-rows:auto auto minmax(0,1fr) auto;
+  grid-template-areas:"head head head" "alert alert alert" "watch center side" "foot foot foot";
+}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:10px 12px;min-width:0;min-height:0}
+.t{font-size:10px;letter-spacing:.08em;color:var(--dim2);text-transform:uppercase;
+  margin-bottom:7px;font-weight:600}
+.chip{font-size:9px;color:var(--warn);border:1px solid var(--warn);border-radius:3px;padding:0 4px;white-space:nowrap}
+.chip:empty{display:none}
+.up{color:var(--up)} .down{color:var(--down)} .warn{color:var(--warn)} .dim{color:var(--dim)} .dim2{color:var(--dim2)}
+svg{display:block;flex:0 0 auto}
+
+/* ── 헤더 ── */
+#head{grid-area:head;height:56px;display:flex;align-items:center;gap:18px;padding:0 14px;position:relative}
+/* v2.2 페이지 탭 — 대시보드 · 백테스트 · 매매기록 (세 페이지가 같은 모양을 쓴다) */
+#nav{display:flex;gap:4px;padding-right:14px;border-right:1px solid var(--line)}
+#nav a{padding:5px 11px;border:1px solid var(--line2);border-radius:4px;color:var(--dim);text-decoration:none;
+  font-size:11px;font-weight:600;white-space:nowrap}
+#nav a:hover{color:var(--fg)}
+#nav a.on{background:var(--sel);border-color:var(--info);color:var(--fg)}
+#symbtn{display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line2);
+  border-radius:6px;background:var(--panel2);cursor:pointer}
+#sym{font-size:15px;font-weight:700;letter-spacing:.02em}
+#symmenu{position:absolute;left:14px;top:50px;z-index:20;background:var(--panel);border:1px solid var(--line2);
+  border-radius:6px;max-height:60vh;overflow:auto;min-width:200px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+#symmenu div{padding:5px 12px;cursor:pointer;font-size:12px;display:flex;gap:6px;align-items:center}
+#symmenu div:hover,#symmenu div.sel{background:var(--sel)}
+#px{font-size:30px;font-weight:700;line-height:1;transition:color .15s}
+#px.up{color:var(--up)} #px.down{color:var(--down)}
+.meta{display:flex;flex-direction:column;gap:1px;white-space:nowrap}
+.meta .l{font-size:9px;color:var(--dim2);letter-spacing:.06em}
+.meta .v{font-size:12px;color:var(--dim)}
+#sess{margin-left:auto;display:flex;align-items:center;gap:12px}
+#nextev{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);white-space:nowrap}
+#nextev b{color:var(--warn)}
+.badge{padding:4px 12px;border-radius:999px;font-size:11px;font-weight:600;
+  border:1px solid var(--line2);color:var(--dim);white-space:nowrap}
+.badge.open{border-color:var(--up);color:var(--up)}
+.badge.blocked{border-color:var(--down);color:var(--down);
+  background:color-mix(in srgb,var(--down) 12%,transparent)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mute);flex:0 0 auto}
+.dot.live{background:var(--up);box-shadow:0 0 0 3px color-mix(in srgb,var(--up) 22%,transparent)}
+.dot.stale{background:var(--warn)} .dot.dead{background:var(--down)}
+
+/* ── 경고 ── */
+#alert{grid-area:alert;display:flex;flex-direction:column;gap:6px}
+#alert:empty{display:none}
+.al{height:36px;padding:0 14px;border-radius:var(--r);font-weight:600;font-size:12.5px;
+  display:flex;gap:12px;align-items:center}
+.al .d{font-weight:400;color:inherit;opacity:.82;font-size:11.5px}
+.al.crit{background:var(--crit);border:1px solid var(--down);color:var(--down)}
+.al.warn{background:color-mix(in srgb,var(--warn) 13%,var(--panel));
+  border:1px solid var(--warn);color:var(--warn)}
+
+/* ── 워치리스트 ── */
+#watch{grid-area:watch;display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:0}
+#whead{display:flex;align-items:center;gap:8px;padding:10px 10px 6px}
+#whead .t{margin:0}
+#wsort{margin-left:auto;font-size:10px;color:var(--dim2);background:none;border:0;cursor:pointer;
+  display:flex;align-items:center;gap:4px}
+.wold{margin:0 10px 6px;padding:6px 8px;border-radius:4px;font-size:11px;font-weight:600;
+  background:color-mix(in srgb,var(--warn) 14%,var(--panel));border:1px solid var(--warn);color:var(--warn);line-height:1.4}
+#wsearch{margin:0 10px 6px;height:26px;border:1px solid var(--line);border-radius:4px;background:var(--panel2);
+  display:flex;align-items:center;gap:6px;padding:0 8px;color:var(--dim2)}
+#wq{flex:1;min-width:0;background:none;border:0;outline:0;font-size:11.5px;color:var(--fg)}
+#wq::placeholder{color:var(--dim2)}
+#wgroups{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 6px}
+.gc{font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid var(--line2);background:transparent;
+  color:var(--dim);cursor:pointer;white-space:nowrap;line-height:1.5}
+.gc.on{background:var(--sel);border-color:var(--info);color:var(--fg)}
+.wcols,.wr{display:grid;grid-template-columns:118px 1fr 58px;gap:6px;padding:0 10px;align-items:center}
+.wcols{padding:2px 10px 4px;border-bottom:1px solid var(--line)}
+.wcols span,.bcols span{font-size:10px;letter-spacing:.06em;color:var(--dim2);text-transform:uppercase}
+.ra{text-align:right}
+#wl{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.wr{height:26px;flex:0 0 26px;border-left:2px solid transparent;cursor:pointer}
+.wr:hover{background:color-mix(in srgb,var(--sel) 60%,transparent)}
+.wr.sel{background:var(--sel);border-left-color:var(--info)}
+.wr .s{font-size:12px;font-weight:500;color:var(--fg2);white-space:nowrap;overflow:hidden}
+.wr.sel .s{font-weight:700;color:var(--fg)}
+.wr .s .chip{margin-left:5px;padding:0 3px}
+.wr .nc{color:var(--dim2);margin-left:4px;font-style:normal;cursor:help}
+.wr .p{font-size:12px;text-align:right;color:var(--fg)}
+.wr .c{font-size:11.5px;text-align:right;font-weight:600}
+#wfoot{border-top:1px solid var(--line);padding:8px 10px;display:flex;justify-content:space-between;
+  font-size:10.5px;color:var(--dim2)}
+#wbasket{color:var(--fg);font-weight:600}
+
+/* ── 가운데: 차트 + 브래킷 ── */
+#center{grid-area:center;display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0}
+#chartp{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:6px}
+#tfs{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.tb{padding:2px 10px;border-radius:4px;border:1px solid var(--line2);background:transparent;
+  color:var(--dim);cursor:pointer;font-size:11px}
+.tb[aria-selected="true"]{background:var(--info);border-color:var(--info);color:#fff}
+#ohlc{margin-left:14px;font-size:11px;color:var(--dim);white-space:nowrap}
+#ohlc b{color:var(--fg)}
+#btnlatest{margin-left:8px}
+.leg{margin-left:auto;font-size:10.5px;color:var(--dim2);display:flex;gap:12px}
+.leg i{font-style:normal}
+#cwrap{flex:1;min-height:0;position:relative}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
+canvas.drag{cursor:grabbing}
+
+#brk{height:196px;flex:0 0 auto;display:flex;flex-direction:column;overflow:hidden;padding:0}
+#brkhead{display:flex;align-items:center;gap:10px;padding:7px 10px 6px;flex-wrap:wrap}
+#brkhead .t{margin:0}
+.tabs{display:flex;gap:4px}
+.tab{padding:2px 10px;border-radius:4px;border:1px solid var(--line2);background:transparent;
+  color:var(--dim);cursor:pointer;font-size:11px;white-space:nowrap;font-weight:600}
+.tab.on{background:var(--sel);border-color:var(--info);color:var(--fg)}
+#brkmode{font-size:10px;border-radius:3px;padding:0 5px}
+#brkstat,#posstat{margin-left:auto;font-size:10.5px;color:var(--dim2)}
+#brkstat b,#posstat b{color:var(--fg)}
+#brkmsg,#posnote{font-size:11px;color:var(--warn);padding:0 10px 4px}
+#brkmsg:empty,#posnote:empty{display:none}
+#brkview,#posview{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+#brkbody,#posbody{flex:1 1 auto;min-height:0;overflow:auto;transition:opacity .2s}
+#posbody.stale{opacity:.55}
+.pcols,.prow{display:grid;grid-template-columns:96px 56px 70px 78px 78px 164px 78px 76px 120px 60px;
+  gap:8px;padding:0 10px;align-items:center;min-width:940px}
+.pcols{padding-bottom:4px}
+.pcols span{font-size:10px;letter-spacing:.06em;color:var(--dim2);text-transform:uppercase}
+.prow{height:30px;border-top:1px solid var(--line);font-size:12px;cursor:pointer;white-space:nowrap}
+.prow:hover{background:color-mix(in srgb,var(--sel) 60%,transparent)}
+.prow.sel{background:var(--sel)}
+.prow .bs{font-weight:600} .prow .bd{font-size:11px;font-weight:700}
+.bcols,.brow{display:grid;grid-template-columns:96px 56px 78px 78px 78px 78px minmax(120px,1fr) 70px 80px;
+  gap:8px;padding:0 10px;align-items:center;min-width:760px}
+.bcols{padding-bottom:4px}
+.brow{height:30px;border-top:1px solid var(--line);font-size:12px}
+.brow .bs{font-weight:600;white-space:nowrap}
+.brow .bd{font-size:11px;font-weight:700}
+.brow .bst{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brow .br{font-weight:700;text-align:right}
+.bclose{height:22px;border:1px solid var(--line2);border-radius:4px;background:transparent;
+  color:var(--dim);font-size:11px;cursor:pointer;white-space:nowrap}
+.bclose:disabled{opacity:.45;cursor:not-allowed}
+.note{font-size:11.5px;color:var(--dim);line-height:1.55}
+#brk .note{padding:8px 10px}
+
+/* ── 오른쪽 열 ── */
+#side{grid-area:side;display:flex;flex-direction:column;gap:8px;min-height:0}
+#side .panel{flex:0 0 auto}
+#reasons{flex:1 1 auto;min-height:72px;overflow:auto}
+/* 주문 패널 — 계약 §7 */
+#side #order{display:flex;flex-direction:column;gap:8px;flex:0 1 auto;min-height:0;overflow:auto}   /* 작은 화면에선 안에서 스크롤 */
+#ohead{display:flex;align-items:center;gap:8px}
+#ohead .t{margin:0;margin-right:auto}
+.of{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px}
+.of .f{display:flex;flex-direction:column;gap:2px;min-width:0}
+.of .f label{font-size:10px;color:var(--dim2);letter-spacing:.04em;display:flex;justify-content:space-between;
+  align-items:center;gap:4px;min-height:17px}
+.of .f label .qs{display:flex;gap:3px}
+.of input{height:26px;border:1px solid var(--line2);border-radius:4px;background:var(--panel2);padding:0 8px;
+  font-size:12px;color:var(--fg);outline:0;width:100%;min-width:0}
+.of input:focus{border-color:var(--info)}
+.of input::placeholder{color:var(--dim2)}
+.of input:disabled,.of button:disabled{opacity:.4;cursor:not-allowed}
+.q{font-size:9.5px;color:var(--dim);border:1px solid var(--line2);border-radius:3px;background:transparent;
+  padding:0 5px;cursor:pointer;line-height:15px;white-space:nowrap}
+#o_symv{height:26px;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;padding:0 8px;
+  border:1px solid var(--line);border-radius:4px;background:var(--panel2);color:var(--fg2)}
+#o_dir{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+#o_dir button{height:26px;border:1px solid var(--line2);border-radius:4px;background:transparent;
+  color:var(--dim);font-weight:700;font-size:12px;cursor:pointer}
+#o_long.on{background:color-mix(in srgb,var(--up) 18%,transparent);border-color:var(--up);color:var(--up)}
+#o_short.on{background:color-mix(in srgb,var(--down) 18%,transparent);border-color:var(--down);color:var(--down)}
+.locked{opacity:.35;pointer-events:none}
+#o_prev{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 8px;padding:6px 8px;
+  border:1px solid var(--line);border-radius:4px;background:var(--panel2);min-height:40px}
+#o_prev .pk{font-size:9.5px;color:var(--dim2);letter-spacing:.04em}
+#o_prev .pv{font-size:12px;font-weight:600;white-space:nowrap}
+ul.ol{list-style:none;display:flex;flex-direction:column;gap:3px;font-size:11px;line-height:1.4}
+ul.ol:empty{display:none}
+ul.ol li{padding-left:12px;position:relative}
+ul.ol li::before{content:"";position:absolute;left:0;top:5px;width:5px;height:5px;border-radius:50%;background:currentColor}
+#o_warn{color:var(--warn)} #o_reasons{color:var(--down)}
+#o_submit{height:30px;border-radius:4px;border:1px solid var(--info);background:var(--info);color:#fff;
+  font-weight:700;font-size:12.5px;cursor:pointer}
+#o_submit:disabled{opacity:.35;cursor:not-allowed}
+#o_msg{font-size:11.5px;line-height:1.45;word-break:break-all} #o_msg:empty{display:none}
+#o_msg.ok{color:var(--up)} #o_msg.bad{color:var(--down)}
+#o_paperbits{display:flex;flex-direction:column;gap:8px}
+#o_lock{display:flex;flex-direction:column;gap:6px;padding:8px;border:1px solid var(--line);border-radius:4px;
+  background:var(--panel2)}
+#o_lockt{display:flex;gap:6px;align-items:flex-start;font-size:11px;color:var(--warn);line-height:1.45}
+#o_lockt svg{margin-top:1px}
+ul.gate{list-style:none;display:flex;flex-direction:column;gap:3px;font-size:11px;line-height:1.4}
+ul.gate li{display:flex;gap:6px} ul.gate li b{font-weight:700;flex:0 0 12px}
+#o_gatesum{font-size:10px;color:var(--dim2)}
+#disc{display:flex;flex-direction:column;gap:10px;transition:opacity .2s}
+#disc.stale{opacity:.55}
+#dischead{display:flex;align-items:center;gap:6px}
+#dischead .t{margin:0}
+#dischead .sub{margin:0}
+.g{display:flex;flex-direction:column;gap:5px}
+.g .gh{display:flex;justify-content:space-between;align-items:baseline}
+.g .gl{font-size:11.5px;color:var(--dim)}
+.g .gv{font-size:13px;font-weight:700}
+.g .gv small{font-size:10px;font-weight:400;color:var(--dim2)}
+.gauge{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.gauge i{display:block;height:100%;border-radius:3px;transition:width .3s;background:var(--mute)}
+#chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:2px}
+.sc{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:4px;background:var(--panel2);
+  border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden}
+.sc.on{background:var(--crit);border-color:var(--down);color:var(--down);font-weight:600}
+#discnote{font-size:10.5px;color:var(--warn)}
+#discnote:empty{display:none}
+.big{font-size:26px;font-weight:700;line-height:1.1}
+.sub{font-size:10.5px;color:var(--dim2);margin-top:2px}
+.row{display:flex;align-items:baseline;gap:10px}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:12px}
+.kv .k{color:var(--dim)} .kv .v{font-weight:600}
+ul.rs{list-style:none;display:flex;flex-direction:column;gap:6px}
+ul.rs li{font-size:11.5px;color:var(--fg);padding-left:12px;position:relative;line-height:1.45}
+ul.rs li::before{content:"";position:absolute;left:0;top:6px;width:4px;height:4px;
+  border-radius:50%;background:var(--warn)}
+ul.rs li.crit::before{background:var(--down)}
+
+/* ── 하단 ── */
+#foot{grid-area:foot;height:26px;display:flex;align-items:center;gap:18px;
+  font-size:11px;color:var(--dim2);padding:0 6px;white-space:nowrap;overflow:hidden}
+#foot b{color:var(--dim);font-weight:600}
+#fmode{margin-left:auto}
+
+@media (max-width:900px){
+  body{overflow:auto}
+  #app{height:auto;min-height:100dvh;grid-template-columns:1fr;
+    grid-template-areas:"head" "alert" "center" "side" "watch" "foot"}
+  #head{height:auto;flex-wrap:wrap;padding:8px 12px}
+  #cwrap{height:240px}
+  canvas{position:relative}
+  #watch{height:360px}
+  .al{height:auto;min-height:36px;padding:8px 14px;flex-wrap:wrap}
+  #brk{height:auto;max-height:260px;overflow:auto}
+  #brkbody{overflow:visible}
+  #foot{height:auto;flex-wrap:wrap;white-space:normal}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="head" class="panel">
+    <nav id="nav"><a class="on" href="/">대시보드</a><a href="/backtests">백테스트</a><a href="/history">매매기록</a></nav>
+    <div id="symbtn" title="종목 선택">
+      <span id="sym">—</span>
+      <span class="chip" id="symtag"></span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--dim)"><path d="M6 9l6 6 6-6"/></svg>
+    </div>
+    <div id="symmenu" hidden></div>
+    <div id="px">—</div>
+    <div class="meta"><span class="l">BID</span><span class="v" id="bid">—</span></div>
+    <div class="meta"><span class="l">ASK</span><span class="v" id="ask">—</span></div>
+    <div class="meta"><span class="l">SPREAD</span><span class="v" id="spr">—</span></div>
+    <div class="meta"><span class="l">펀딩 · 다음 정산</span><span class="v" id="fund">—</span></div>
+    <div class="meta"><span class="l" id="undl">본주</span><span class="v" id="undv">—</span></div>
+    <div id="sess">
+      <div id="nextev">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <span id="nextevt">다음 이벤트 없음</span>
+      </div>
+      <span class="badge" id="regime">연결 중</span>
+      <span class="dot" id="dot"></span>
+    </div>
+  </div>
+
+  <div id="alert"></div>
+
+  <div id="watch" class="panel">
+    <div id="whead">
+      <span class="t" id="wtitle">워치리스트</span>
+      <button id="wsort" title="정렬 바꾸기"><span id="wsortl">변동률순</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+    </div>
+    <div id="wold" class="wold" hidden></div>
+    <div id="wsearch">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="wq" type="search" placeholder="종목 검색" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="wgroups" hidden></div>
+    <div class="wcols"><span>종목</span><span class="ra">현재가</span><span class="ra">24h</span></div>
+    <div id="wl"><div class="note" style="padding:8px 10px">—</div></div>
+    <div id="wfoot"><span>바스켓 노출 합계</span><span id="wbasket">—</span></div>
+  </div>
+
+  <div id="center">
+    <div id="chartp" class="panel">
+      <div id="tfs">
+        <button class="tb" data-tf="1">1m</button>
+        <button class="tb" data-tf="5" aria-selected="true">5m</button>
+        <button class="tb" data-tf="15">15m</button>
+        <button class="tb" data-tf="60">1h</button>
+        <span id="ohlc">—</span>
+        <button class="tb" id="btnlatest" title="마지막 봉으로 (더블클릭도 됨)" hidden>최신</button>
+        <div class="leg">
+          <i style="color:var(--info)">EMA9</i>
+          <i style="color:var(--warn)">EMA21</i>
+          <i style="color:var(--ema99)">EMA99</i>
+          <i style="color:var(--fg)">VWAP</i>
+        </div>
+      </div>
+      <div id="cwrap"><canvas id="chart"></canvas></div>
+    </div>
+
+    <div id="brk" class="panel">
+      <div id="brkhead">
+        <div class="tabs">
+          <button class="tab on" id="tab_brk"><span id="brktitle">페이퍼 브래킷</span></button>
+          <button class="tab" id="tab_pos"><span id="postitle">실매매 포지션</span></button>
+        </div>
+        <span class="chip" id="brkmode"></span>
+        <span id="brkstat">—</span>
+        <span id="posstat" hidden>지갑 <b id="pwallet">—</b> · Σ 노셔널 <b id="pnot">—</b> · <span id="daily"></span></span>
+      </div>
+      <div id="brkview">
+        <div id="brkmsg"></div>
+        <div class="bcols"><span>종목</span><span>방향</span><span class="ra">진입</span><span class="ra">손절</span>
+          <span class="ra">TP1</span><span class="ra">TP2</span><span>상태</span><span class="ra">R</span><span></span></div>
+        <div id="brkbody"><div class="note">—</div></div>
+      </div>
+      <div id="posview" hidden>
+        <div id="posnote"></div>
+        <div class="pcols"><span>종목</span><span>방향</span><span class="ra">수량</span><span class="ra">진입</span>
+          <span class="ra">현재가</span><span class="ra">평가손익 (USDT · %)</span><span class="ra">청산가</span>
+          <span class="ra">청산까지</span><span>손절주문</span><span class="ra">실효배수</span></div>
+        <div id="posbody"><div class="note">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="side">
+    <div class="panel" id="disc">
+      <div id="dischead"><span class="t">규율 지표</span><span class="sub">· 1초 갱신</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--up)"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/></svg>
+        <span id="discnote"></span></div>
+      <div class="g"><div class="gh"><span class="gl">계좌 총 노출</span><span class="gv" id="g_exp">—</span></div><div class="gauge"><i id="gb_exp"></i></div></div>
+      <div class="g"><div class="gh"><span class="gl" id="gl_sym">한 종목 최대 노출</span><span class="gv" id="g_sym">—</span></div><div class="gauge"><i id="gb_sym"></i></div></div>
+      <div class="g"><div class="gh"><span class="gl">오늘 낙폭</span><span class="gv" id="g_dd">—</span></div><div class="gauge"><i id="gb_dd"></i></div></div>
+      <div class="g"><div class="gh"><span class="gl">오늘 손실 여유</span><span class="gv" id="g_r">—</span></div><div class="gauge"><i id="gb_r"></i></div></div>
+      <div id="chips">
+        <div class="sc" id="c_ev"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="c_evt">이벤트 —</span></div>
+        <div class="sc" id="c_close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span id="c_closet">휴장까지 —</span></div>
+      </div>
+    </div>
+    <div class="panel" id="order">
+      <div id="ohead">
+        <span class="t">주문 패널</span>
+        <div class="tabs">
+          <button class="tab on" id="o_tab_paper">페이퍼</button>
+          <button class="tab" id="o_tab_live">실매매</button>
+        </div>
+      </div>
+      <div id="o_lock" hidden>
+        <div id="o_lockt">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <span>실거래 주문 경로는 아직 없습니다 — docs/07 게이트 조건이 전부 충족돼야 열립니다</span>
+        </div>
+        <ul class="gate" id="o_gate"><li class="dim">게이트 조건을 불러오는 중…</li></ul>
+        <span id="o_gatesum"></span>
+      </div>
+      <div class="of" id="o_form">
+        <div class="f"><label>종목 <span class="dim2">포커스</span></label>
+          <div id="o_symv"><span id="o_sym">—</span><span class="chip" id="o_lev"></span></div></div>
+        <div class="f"><label>방향</label>
+          <div id="o_dir"><button id="o_long" class="on">LONG</button><button id="o_short">SHORT</button></div></div>
+        <div class="f"><label>진입 <span class="dim2">USDT</span></label>
+          <input id="o_entry" type="text" inputmode="decimal" placeholder="비우면 시장가" autocomplete="off"></div>
+        <div class="f"><label>손절 <span class="down">필수</span>
+            <span class="qs"><button class="q" id="o_sl_m" title="현재가(또는 진입가) 기준 1% 아래">손절 −1%</button>
+              <button class="q" id="o_sl_p" title="현재가(또는 진입가) 기준 1% 위">손절 +1%</button></span></label>
+          <input id="o_stop" type="text" inputmode="decimal" placeholder="손절가" autocomplete="off"></div>
+        <div class="f"><label>TP1 <span class="qs"><button class="q" id="o_tp1_q" title="손절폭의 1.5배">TP1 +1.5R</button></span></label>
+          <input id="o_tp1" type="text" inputmode="decimal" placeholder="선택" autocomplete="off"></div>
+        <div class="f"><label>TP2 <span class="qs"><button class="q" id="o_tp2_q" title="손절폭의 3배">TP2 +3R</button></span></label>
+          <input id="o_tp2" type="text" inputmode="decimal" placeholder="선택" autocomplete="off"></div>
+        <div class="f"><label>위험 % <span class="dim2">지갑 대비</span></label>
+          <input id="o_risk" type="text" inputmode="decimal" value="0.5" autocomplete="off"></div>
+        <div class="f"><label>만료 초 <span class="dim2">지정가 대기</span></label>
+          <input id="o_exp" type="text" inputmode="numeric" value="300" autocomplete="off"></div>
+      </div>
+      <div id="o_paperbits">
+        <div id="o_prev"></div>
+        <ul class="ol" id="o_warn"></ul>
+        <ul class="ol" id="o_reasons"></ul>
+        <button id="o_submit" disabled>주문 넣기</button>
+        <div id="o_msg"></div>
+      </div>
+    </div>
+    <div class="panel" id="reasons">
+      <div class="t">매매 금지 사유</div>
+      <div id="rs"></div>
+    </div>
+  </div>
+
+  <div id="foot">
+    <span id="fconn">—</span>
+    <span id="fpaper">—</span>
+    <span id="fdata">—</span>
+    <span id="fev">—</span>
+    <span id="fmode">—</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* 계산은 전부 서버에서 한다 (01 문서 원칙 4).
+   단, **매초 움직이는 값**(평가손익·R·카운트다운·경과시간)만 브라우저가 스스로 센다.
+   그래야 1초마다 화면이 살아 있으면서도 바이낸스 API 호출은 늘지 않는다.
+   메시지 형태는 docs/15-대시보드-v2-계약.md 에 고정돼 있다. */
+
+const $ = (id) => document.getElementById(id);
+const nf = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v))
+  ? "—" : Number(v).toLocaleString("ko-KR", {minimumFractionDigits: d, maximumFractionDigits: d});
+const pf = (v, d = 2) => v === null || v === undefined ? "—" : nf(v, d) + "%";
+const sf = (v, d = 2, unit = "") => v === null || v === undefined ? "—" : (v > 0 ? "+" : "") + nf(v, d) + unit;
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c] || c));
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+/* 테마 색은 한 번만 읽어 둔다 — getComputedStyle 을 프레임마다 수십 번 부르면 팬이 버벅인다 */
+const TH = {};
+function refreshTheme(){
+  for (const k of ["--bg","--panel","--line","--fg","--dim","--dim2","--up","--down","--warn","--info","--mute","--ema99"])
+    TH[k] = css(k);
+}
+const col = (n) => TH[n] || (TH[n] = css(n));
+/* 그리기는 프레임당 한 번으로 모은다 — 포인터 이동·휠·호가가 겹쳐도 draw() 는 한 번 */
+let drawPending = false;
+function scheduleDraw(){
+  if (drawPending) return;
+  drawPending = true;
+  const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : (f) => f();
+  raf(() => { drawPending = false; draw(); });
+}
+const base = (sym) => String(sym || "").replace(/USDT$/, "");
+const pxf = (v) => v == null ? "—" : nf(v, Math.abs(v) >= 1000 ? 1 : 2);
+
+function dur(sec){
+  if (sec === null || sec === undefined || Number.isNaN(sec)) return "—";
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60), s = sec%60;
+  return h ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
+           : `${m}:${String(s).padStart(2,"0")}`;
+}
+const hms = (ms) => { const d = new Date(ms); const p = n => String(n).padStart(2,"0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+
+/* ── 상태 ─────────────────────────────────────────── */
+const S = {
+  symbol: null, focusPending: false,
+  price: null, prevPrice: null, quoteAt: null, fresh: false,
+  snap: null, snapAt: null, tf: 5, bars: [], live: null, connected: false,
+  limit: 200, loadingMore: false,
+  view: {start: 0, count: 120, follow: true}, hover: null, drag: null, cross: null, geom: null,
+  serverOld: null, connectedAt: null,
+  sessionEndsAt: null, eventAt: null, eventName: null, eventFromSnap: false,
+  market: null, fundingAt: null,
+  watch: null, wsort: "chg", wprice: {}, wgroup: "전체",
+  disc: null, discOk: true, discEventAt: null, closesAt: null,
+  brk: null, mode: null, brkTab: "brk",
+  pos: null, posOk: true,
+  order: {tab: "paper", dir: "LONG", riskTouched: false, preview: null, seq: 0, timer: null, gate: null, busy: false},
+};
+const O = S.order;
+const WGROUPS = ["전체", "반도체", "지수ETF", "대형기술주", "기타"];
+
+/* ── 헤더 (매초) ──────────────────────────────────── */
+function paintSym(){
+  $("sym").textContent = S.symbol || "—";
+  const it = S.watch && (S.watch.items || []).find(i => i.symbol === S.symbol);
+  $("symtag").textContent = it && it.lev_tag ? `${it.lev_tag} ETF` : "";
+  $("o_sym").textContent = S.symbol || "—";
+  $("o_lev").textContent = it && it.lev_tag ? it.lev_tag : "";
+}
+function paintHead(){
+  const el = $("px");
+  if (S.price == null){ el.textContent = "—"; }
+  else {
+    el.textContent = nf(S.price, 2);
+    if (S.prevPrice != null && S.price !== S.prevPrice){
+      el.classList.remove("up","down");
+      void el.offsetWidth;
+      el.classList.add(S.price > S.prevPrice ? "up" : "down");
+    }
+  }
+  const age = S.quoteAt ? (Date.now() - S.quoteAt) / 1000 : null;
+  const dot = $("dot");
+  dot.className = "dot " + (!S.connected ? "dead"
+    : (!S.fresh || age > 20) ? "stale" : "live");
+  dot.title = !S.connected ? "서버 연결 끊김"
+    : (!S.fresh ? "시세 없음 — th stream 이 도는지 확인"
+       : `${Math.round(age)}초 전 시세`);
+  /* 펀딩 · 본주 — market 메시지(20초) + 매초 카운트다운 */
+  const mk = S.market;
+  $("fund").textContent = mk && mk.funding_rate != null
+    ? `${sf(mk.funding_rate*100, 4, "%")} · ${S.fundingAt ? dur((S.fundingAt-Date.now())/1000) : "—"}` : "—";
+  $("undl").textContent = "본주 " + (mk && mk.underlying_ticker ? mk.underlying_ticker : base(S.symbol) || "");
+  $("undv").textContent = mk && mk.underlying_price != null
+    ? `${nf(mk.underlying_price, 2)} · 베이시스 ${sf(mk.basis_pct, 2, "%")}` : "—";
+  $("nextevt").innerHTML = S.eventName
+    ? `${esc(S.eventName)}까지 <b>${dur((S.eventAt-Date.now())/1000)}</b>` : "다음 이벤트 없음";
+}
+
+/* ── 세션 배지 (매초 카운트다운) ──────────────────── */
+function paintSession(){
+  const b = $("regime");
+  const s = S.snap && S.snap.session;
+  if (!s){ b.textContent = "세션 —"; b.className = "badge"; return; }
+  b.className = "badge " + (s.blocked ? "blocked" : "open");
+  const left = S.sessionEndsAt ? (S.sessionEndsAt - Date.now()) / 1000 : null;
+  b.textContent = (s.regime_label_ko || s.regime) + (left != null ? ` · ${dur(left)} 남음` : "");
+}
+
+/* ── 실매매 포지션 표 (계약 §8 · positions 메시지 3초 + 매초 재계산) ──
+   예전 '청산까지'·'포지션' 패널을 대체한다. 종목별 한 줄. */
+const liqCls = (d) => d == null ? "dim" : d < 3 ? "down" : d < 6 ? "warn" : "up";
+const pnlCls = (v) => v == null ? "dim" : v > 0 ? "up" : v < 0 ? "down" : "";
+/* 현재가는 포커스 종목이면 S.price, 아니면 워치리스트 가격, 둘 다 없으면 서버 마크가 */
+function posPrice(sym, fallback){
+  if (sym === S.symbol && S.price != null) return S.price;
+  return S.wprice[sym] ?? (fallback == null ? null : fallback);
+}
+/* 매초 움직이는 값 — 평가손익(USDT·%)·청산까지%·손절 거리 */
+function posLive(p){
+  const px = posPrice(p.symbol, p.mark_price), sign = p.side === "LONG" ? 1 : -1;
+  let pnl = p.unrealized_pnl ?? null, pct = p.unrealized_pct ?? null;
+  if (px != null && p.entry_price && p.qty){
+    pnl = sign * (px - p.entry_price) * p.qty;
+    pct = pnl / (p.entry_price * p.qty) * 100;
+  }
+  let liqd = p.liq_distance_pct ?? null;
+  if (px != null && px > 0 && p.liquidation_price > 0) liqd = sign * (px - p.liquidation_price) / px * 100;
+  let stopd = p.stop_distance_pct ?? null;
+  if (px != null && px > 0 && p.stop_price) stopd = Math.abs(px - p.stop_price) / px * 100;
+  return {px, pnl, pct, liqd, stopd};
+}
+const pnlTxt = (L) => L.pnl == null ? "—" : `${sf(L.pnl, 2)} USDT · ${sf(L.pct, 2, "%")}`;
+const stopTxt = (p, L) => p.has_stop ? `${pxf(p.stop_price)} · ${pf(L.stopd, 2)}` : "없음";
+function posRow(p){
+  const L = posLive(p), sym = p.symbol, id = esc(sym);
+  return `<div class="prow${sym === S.symbol ? " sel" : ""}" data-sym="${id}" title="클릭하면 이 종목으로 포커스">`
+    + `<span class="bs">${id}</span><span class="bd ${p.side === "LONG" ? "up" : "down"}">${esc(p.side)}</span>`
+    + `<span class="ra">${nf(p.qty, 2)}</span><span class="ra">${pxf(p.entry_price)}</span>`
+    + `<span class="ra" id="pc_px_${id}">${pxf(L.px)}</span>`
+    + `<span class="ra ${pnlCls(L.pnl)}" id="pc_pnl_${id}">${pnlTxt(L)}</span>`
+    + `<span class="ra">${pxf(p.liquidation_price)}</span>`
+    + `<span class="ra ${liqCls(L.liqd)}" id="pc_liqd_${id}">${pf(L.liqd, 2)}</span>`
+    + `<span class="${p.has_stop ? "up" : "down"}" id="pc_stop_${id}">${stopTxt(p, L)}</span>`
+    + `<span class="ra">${p.leverage_eff == null ? "—" : nf(p.leverage_eff, 2) + "배"}</span></div>`;
+}
+function applyPositions(m){
+  if (m.ok === false){
+    /* 계정 조회 실패 — 마지막 값을 유지하고 흐리게. 서버가 마지막 값을 같이 주면 그걸 쓴다 */
+    S.posOk = false;
+    if (!S.pos) S.pos = {items: [], wallet_usdt: null};
+    if (m.items && m.items.length) S.pos.items = m.items;
+    if (m.wallet_usdt != null) S.pos.wallet_usdt = m.wallet_usdt;
+  } else { S.posOk = true; S.pos = m; }
+  paintPositions(); scheduleDraw();
+}
+function paintPositions(){
+  const p = S.pos, body = $("posbody"), note = $("posnote");
+  if (!p){ $("postitle").textContent = "실매매 포지션"; paintRisk(); return; }   /* 메시지 전 — 스냅샷 risk 로 대체 */
+  const items = p.items || [];
+  $("postitle").textContent = `실매매 포지션 · 열림 ${items.length}`;
+  body.className = S.posOk ? "" : "stale";
+  note.innerHTML = S.posOk ? "" : `계좌 조회 실패 — 아래는 <b>마지막으로 확인된 값</b>입니다.`;
+  $("pwallet").textContent = p.wallet_usdt == null ? "—" : nf(p.wallet_usdt, 1) + " USDT";
+  if (!items.length){
+    $("pnot").textContent = "—";
+    body.innerHTML = S.posOk ? `<div class="note">열린 포지션이 없습니다.</div>`
+                             : `<div class="note">계좌 조회 실패 — 확인된 포지션 값이 없습니다.</div>`;
+    return;
+  }
+  body.innerHTML = items.map(posRow).join("");
+  paintPositionsLive();
+}
+/* 매초: 현재가·평가손익·청산까지·손절 거리 셀만 다시 쓴다 */
+function paintPositionsLive(){
+  const p = S.pos; if (!p){ paintRisk(); return; }
+  let sum = 0;
+  for (const x of (p.items || [])){
+    const L = posLive(x), id = x.symbol;
+    sum += Math.abs((L.px != null && x.qty) ? L.px * x.qty : (x.notional_usdt || 0));
+    const px = $("pc_px_" + id); px.textContent = pxf(L.px);
+    const pn = $("pc_pnl_" + id); pn.textContent = pnlTxt(L); pn.className = "ra " + pnlCls(L.pnl);
+    const lq = $("pc_liqd_" + id); lq.textContent = pf(L.liqd, 2); lq.className = "ra " + liqCls(L.liqd);
+    $("pc_stop_" + id).textContent = stopTxt(x, L);
+  }
+  $("pnot").textContent = (p.items || []).length ? nf(sum, 0) + " USDT" : "—";
+}
+/* positions 메시지가 아직 없을 때(옛 서버·초기 로드)의 대체 — 스냅샷 risk 의 포커스 종목 한 줄.
+   ⚠️ 조회 실패를 '포지션 없음'으로 그리지 않는다. 10배에서 없다고 믿고 또 잡으면 두 배로 물린다. */
+function paintRisk(){
+  if (S.pos) return;
+  const r = S.snap && S.snap.risk, body = $("posbody"), note = $("posnote");
+  if (!r){ body.innerHTML = `<div class="note">—</div>`; note.innerHTML = ""; body.className = ""; return; }
+  const failed = !!(r.errors && r.errors.length);
+  body.className = failed ? "stale" : "";
+  note.innerHTML = failed
+    ? `계좌 조회 실패 — ${esc(r.errors.join(" · "))} · 아래는 <b>마지막으로 확인된 값</b>입니다.` : "";
+  if (!r.has_position){ body.innerHTML = `<div class="note">열린 포지션이 없습니다.</div>`; return; }
+  /* 평가손익은 매초 여기서 직접 센다(S.price) — 스냅샷을 기다리지 않는다 */
+  const p = {symbol: S.symbol || (S.snap.symbol || "—"), side: r.side, qty: r.qty, entry_price: r.entry_price,
+             mark_price: S.price, liquidation_price: r.liquidation_price, liq_distance_pct: r.liq_distance_pct,
+             leverage_eff: r.account_leverage, has_stop: r.has_stop, stop_price: r.stop_price,
+             stop_distance_pct: r.stop_distance_pct, notional_usdt: null};
+  body.innerHTML = posRow(p);
+  const L = posLive(p);
+  $("pnot").textContent = L.px != null && p.qty ? nf(Math.abs(L.px * p.qty), 0) + " USDT" : "—";
+}
+
+function paintDaily(){
+  const r = S.snap && S.snap.risk, el = $("daily");
+  if (!r){ el.innerHTML = "오늘 실현 <b>—</b>"; return; }
+  const v = r.daily_r;
+  const cls = v == null ? "" : v <= -3 ? "down" : v < 0 ? "warn" : "up";
+  el.innerHTML = `오늘 실현 <b class="${cls}" title="한국 자정 기준">${v == null ? "—" : (v>0?"+":"") + nf(v,2) + "R"}</b>`
+    + (r.daily_locked ? ` · <b class="down">−3R 한도 도달 — 오늘은 잠김</b>` : "");
+}
+
+function paintReasons(){
+  const n = S.snap && S.snap.no_trade, el = $("rs");
+  if (!n){ el.innerHTML = `<div class="note">—</div>`; return; }
+  if (n.reasons && n.reasons.length){
+    el.innerHTML = `<ul class="rs">${n.reasons.map(r =>
+      `<li class="${r.source === "event" || r.source === "session" ? "crit" : ""}">${esc(r.text_ko)}</li>`).join("")}</ul>`;
+    return;
+  }
+  /* ⚠️ 빈 목록을 초록불로 그리면 안 된다. 색도 문구도 중립으로 둔다. */
+  el.innerHTML = `<div class="note">${esc(n.note_ko || "")}</div>`;
+}
+
+function paintAlerts(){
+  const a = (S.snap && S.snap.alerts) || [];
+  const shield = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/></svg>`;
+  $("alert").innerHTML = a
+    .filter(x => x.level === "critical" || x.level === "warning")
+    .map(x => `<div class="al ${x.level === "critical" ? "crit" : "warn"}">${shield}
+        <span>${esc(x.message_ko)}</span>${x.detail_ko ? `<span class="d">${esc(x.detail_ko)}</span>` : ""}</div>`)
+    .join("");
+}
+
+/* ── 규율 지표 (스냅샷 discipline + 매초 카운트다운) ── */
+function gaugeColor(frac){
+  return frac >= 0.9 ? "var(--down)" : frac >= 0.7 ? "var(--warn)" : "var(--up)";
+}
+function gaugeCls(frac){ return frac >= 0.9 ? "down" : frac >= 0.7 ? "warn" : "up"; }
+function setGauge(id, text, limitText, usedFrac, widthFrac){
+  const v = $("g_"+id), b = $("gb_"+id);
+  if (usedFrac == null){
+    v.innerHTML = `— <small>/ 한도 ${limitText}</small>`; v.className = "gv";
+    b.style.width = "0%"; b.style.background = "var(--mute)"; return;
+  }
+  const f = Math.max(0, Math.min(1, usedFrac));
+  v.innerHTML = `${text} <small>/ 한도 ${limitText}</small>`;
+  v.className = "gv " + gaugeCls(f);
+  b.style.width = `${Math.max(0, Math.min(100, (widthFrac == null ? f : widthFrac) * 100)).toFixed(1)}%`;
+  b.style.background = gaugeColor(f);
+}
+function applyDiscipline(d){
+  if (!d) return;
+  if (d.ok === false){
+    S.discOk = false;                    /* 숫자는 null — 마지막 값을 유지하고 흐리게 */
+    if (d.event_in_sec != null) S.discEventAt = Date.now() + d.event_in_sec*1000;
+    if (d.closes_in_sec != null) S.closesAt = Date.now() + d.closes_in_sec*1000;
+    return;
+  }
+  S.discOk = true; S.disc = d;
+  S.discEventAt = d.event_in_sec != null ? Date.now() + d.event_in_sec*1000 : null;
+  S.closesAt = d.closes_in_sec != null ? Date.now() + d.closes_in_sec*1000 : null;
+}
+function paintDiscipline(){
+  const d = S.disc, p = $("disc");
+  p.className = "panel" + (S.discOk ? "" : " stale");
+  $("discnote").textContent = S.discOk ? "" : "마지막으로 확인된 값";
+  if (!d){
+    setGauge("exp", "—", "3x", null); setGauge("sym", "—", "1x", null);
+    setGauge("dd", "—", "15%", null); setGauge("r", "—", "3R", null);
+    $("c_evt").textContent = "이벤트 —"; $("c_ev").className = "sc";
+    $("c_closet").textContent = "휴장까지 —";
+    return;
+  }
+  const lim = (v, dflt) => v != null ? v : dflt;
+  const tl = lim(d.total_limit_x, 3), sl = lim(d.symbol_limit_x, 1),
+        dl = lim(d.drawdown_limit_pct, 15), rl = lim(d.r_limit, 3);
+  setGauge("exp", `${nf(d.total_exposure_x,1)}x`, `${nf(tl,0)}x`,
+           d.total_exposure_x == null ? null : d.total_exposure_x / tl);
+  $("gl_sym").textContent = "한 종목 최대 노출" + (d.max_symbol ? ` (${base(d.max_symbol)})` : "");
+  setGauge("sym", `${nf(d.max_symbol_exposure_x,1)}x`, `${nf(sl,0)}x`,
+           d.max_symbol_exposure_x == null ? null : d.max_symbol_exposure_x / sl);
+  const dd = d.daily_pnl_pct;
+  setGauge("dd", sf(dd, 1, "%"), `${nf(dl,0)}%`,
+           dd == null ? null : Math.max(0, -dd) / dl);
+  const rr = d.remaining_r;
+  setGauge("r", `${nf(rr,1)}R`, `${nf(rl,0)}R`,
+           rr == null ? null : (rl - rr) / rl, rr == null ? null : rr / rl);
+  /* 상태 칩 — 카운트다운은 매초 */
+  const evLeft = S.discEventAt ? (S.discEventAt - Date.now())/1000 : null;
+  if (d.event_blocked){
+    $("c_ev").className = "sc on";
+    $("c_evt").textContent = `이벤트 차단 · ${evLeft != null ? Math.max(0, Math.floor(evLeft/60)) + "분" : "—"}`;
+  } else {
+    $("c_ev").className = "sc";
+    $("c_evt").textContent = d.event_name && evLeft != null
+      ? `${d.event_name} · ${dur(evLeft)}` : "이벤트 차단 없음";
+  }
+  $("c_closet").textContent = "휴장까지 " + (S.closesAt ? dur((S.closesAt - Date.now())/1000) : "—");
+}
+
+/* ── 워치리스트 (5초 메시지 + 클라이언트 정렬·검색) ── */
+function watchRows(){
+  const w = S.watch; if (!w) return [];
+  const q = (($("wq").value) || "").trim().toUpperCase();
+  let items = groupRows();
+  if (q) items = items.filter(i => i.symbol.toUpperCase().includes(q));
+  if (S.wsort === "chg")
+    items.sort((a, b) => (b.change_pct ?? -Infinity) - (a.change_pct ?? -Infinity));
+  else items.sort((a, b) => base(a.symbol).localeCompare(base(b.symbol)));
+  return items;
+}
+/* 그룹 칩(계약 §6) — item.group 이 없는 옛 서버면 칩을 숨기고 전체를 보여준다 */
+const itemGroup = (i) => i.group || "기타";
+function groupRows(){
+  const items = ((S.watch && S.watch.items) || []).slice();
+  return S.wgroup === "전체" ? items : items.filter(i => itemGroup(i) === S.wgroup);
+}
+function setWatchGroup(g){
+  S.wgroup = WGROUPS.includes(g) ? g : "전체";
+  paintWatch();
+}
+function paintWatchGroups(){
+  const items = (S.watch && S.watch.items) || [], el = $("wgroups");
+  const has = items.some(i => i.group);
+  el.hidden = !has;
+  if (!has){ el.innerHTML = ""; if (S.wgroup !== "전체") S.wgroup = "전체"; return; }
+  el.innerHTML = WGROUPS.map(g => {
+    const n = g === "전체" ? items.length : items.filter(i => itemGroup(i) === g).length;
+    return `<button class="gc${g === S.wgroup ? " on" : ""}" data-g="${g}" title="${n}종목">${g}</button>`;
+  }).join("");
+}
+function paintWatch(){
+  const w = S.watch, el = $("wl");
+  $("wsortl").textContent = S.wsort === "chg" ? "변동률순" : "종목순";
+  if (!w){ el.innerHTML = `<div class="note" style="padding:8px 10px">—</div>`; $("wbasket").textContent = "—"; return; }
+  paintWatchGroups();
+  /* 머리글의 수는 그룹 필터를 반영한다 (검색은 제외) */
+  $("wtitle").textContent = `워치리스트 · ${groupRows().length}`;
+  const rows = watchRows();
+  el.innerHTML = rows.map(i => {
+    const c = i.change_pct, cc = c == null ? "dim" : c > 0 ? "up" : c < 0 ? "down" : "dim";
+    return `<div class="wr${i.symbol === S.symbol ? " sel" : ""}" data-sym="${esc(i.symbol)}" title="${esc(i.symbol)}">`
+      + `<span class="s">${esc(base(i.symbol))}${i.lev_tag ? `<span class="chip">${esc(i.lev_tag)}</span>` : ""}`
+      + (i.collected === false ? `<i class="nc" title="실시간 봉 수집 안 함 — 차트는 바이낸스 공개 데이터">◌</i>` : "")
+      + `</span><span class="p">${pxf(i.price)}</span><span class="c ${cc}">${sf(c, 2, "%")}</span></div>`;
+  }).join("") || `<div class="note" style="padding:8px 10px">검색 결과 없음</div>`;
+  $("wbasket").textContent = w.basket_exposure_x == null ? "—" : `${nf(w.basket_exposure_x, 1)}x`;
+  /* 헤더 종목 메뉴도 같은 목록 */
+  $("symmenu").innerHTML = (w.items || []).map(i =>
+    `<div data-sym="${esc(i.symbol)}" class="${i.symbol === S.symbol ? "sel" : ""}">${esc(i.symbol)}`
+    + (i.lev_tag ? `<span class="chip">${esc(i.lev_tag)}</span>` : "") + `</div>`).join("");
+  paintSym();
+}
+
+/* 포커스 종목 바꾸기 — 서버(허브)가 진짜 상태다. 여기서는 요청하고, 화면을 새 종목으로 비운다 */
+function setFocus(sym){
+  if (!sym || sym === S.symbol) return;
+  S.symbol = sym;
+  S.bars = []; S.live = null; S.price = null; S.prevPrice = null; S.fresh = false; S.quoteAt = null;
+  S.market = null; S.fundingAt = null; S.hover = null; S.limit = 200; S.loadingMore = false;
+  S.view = {start: 0, count: S.view.count, follow: true};
+  $("bid").textContent = $("ask").textContent = "—"; $("spr").textContent = "—";
+  resetOrderForm();                                   /* 다른 종목의 가격으로 넣은 손절·목표는 버린다 */
+  paintSym(); paintWatch(); paintBrackets(); paintPositions(); scheduleDraw();
+  loadChart();
+}
+async function requestFocus(sym){
+  if (!sym || sym === S.symbol) return;
+  S.focusPending = true;
+  try{
+    const r = await fetch("/api/focus", {method: "POST", headers: {"content-type": "application/json"},
+                                        body: JSON.stringify({symbol: sym})});
+    if (r.ok) setFocus(sym);
+  }catch(e){ /* 연결 문제 — 서버 focus 메시지가 오면 그때 따라간다 */ }
+  finally{ S.focusPending = false; }
+}
+
+/* ── 페이퍼 브래킷 (3초 메시지 + 매초 R) ─────────── */
+function bracketR(b){
+  const px = (b.symbol === S.symbol && S.price != null) ? S.price : (S.wprice[b.symbol] ?? null);
+  if (px == null || b.entry == null || !(b.risk_per_unit > 0)) return null;
+  if (b.position_qty != null && !(b.position_qty > 0)) return null;      /* 진입 전 */
+  return (px - b.entry) * (b.direction === "LONG" ? 1 : -1) / b.risk_per_unit;
+}
+const rTxt = (v) => v == null ? "—" : (v > 0 ? "+" : "") + nf(v, 2) + "R";
+const rCls = (v) => v == null ? "dim" : v > 0 ? "up" : v < 0 ? "down" : "";
+function statusCls(s){
+  s = s || "";
+  return s.startsWith("진입 대기") ? "warn" : s.startsWith("TP1") ? "up" : s.startsWith("청산") ? "dim2" : "dim";
+}
+function paintBrackets(){
+  const b = S.brk, body = $("brkbody");
+  const mode = (b && b.mode) || S.mode;
+  $("brkmode").textContent = mode == null ? "" : mode === "paper" ? "PAPER — 돈이 나가지 않음" : `${String(mode).toUpperCase()} — 웹 청산 없음`;
+  if (!b){ $("brktitle").textContent = "페이퍼 브래킷"; $("brkstat").textContent = "—";
+           body.innerHTML = `<div class="note">—</div>`; return; }
+  const open = b.open || [];
+  $("brktitle").textContent = `페이퍼 브래킷 · 열림 ${open.length}`;
+  $("brkstat").innerHTML = b.available === false ? esc(b.message_ko || "기록을 못 읽었습니다")
+    : `오늘 실현 <b class="${rCls(b.today_realized_r)}">${rTxt(b.today_realized_r)}</b> · ${b.today_count ?? 0}건 · 기대값 <b>${rTxt(b.expectancy_r)}</b>`;
+  if (!open.length){ body.innerHTML = `<div class="note">열린 브래킷이 없습니다.</div>`; return; }
+  const canClose = mode === "paper";
+  body.innerHTML = open.map(x => {
+    const r = bracketR(x);
+    const dis = !canClose || x.close_requested;
+    return `<div class="brow" data-id="${esc(x.id)}">`
+      + `<span class="bs">${esc(x.symbol)}${x.setup_id ? ` <span class="chip" title="시그널 엔진이 연 브래킷 (${esc(x.setup_id)})">자동</span>` : ""}</span>`
+      + `<span class="bd ${x.direction === "LONG" ? "up" : "down"}">${esc(x.direction)}</span>`
+      + `<span class="ra">${nf(x.entry, 2)}</span><span class="ra down">${nf(x.stop, 2)}</span>`
+      + `<span class="ra up">${nf(x.tp1, 2)}</span><span class="ra up">${nf(x.tp2, 2)}</span>`
+      + `<span class="bst ${statusCls(x.status_ko)}" title="${esc(x.status_ko)}">${esc(x.status_ko || "—")}</span>`
+      + `<span class="br ${rCls(r)}" id="br_${esc(x.id)}">${rTxt(r)}</span>`
+      + `<button class="bclose" data-id="${esc(x.id)}"${dis ? " disabled" : ""} title="${
+          !canClose ? "실거래에서는 웹 청산이 없습니다" : x.close_requested ? "청산 요청됨" : "페이퍼 브래킷을 시장가로 정리"}">시장가 청산</button>`
+      + `</div>`;
+  }).join("");
+}
+function paintBracketR(){
+  const b = S.brk; if (!b) return;
+  for (const x of (b.open || [])){
+    const el = $("br_" + x.id); if (!el) continue;
+    const r = bracketR(x);
+    el.textContent = rTxt(r); el.className = "br " + rCls(r);
+  }
+}
+async function closeBracket(id){
+  const b = S.brk && (S.brk.open || []).find(x => x.id === id);
+  if (!b || b.close_requested) return;
+  $("brkmsg").textContent = "";
+  try{
+    const r = await fetch(`/api/brackets/${encodeURIComponent(id)}/close`, {method: "POST"});
+    if (r.status === 403){ $("brkmsg").textContent = "실거래에서는 웹 청산이 없습니다"; return; }
+    if (!r.ok){ $("brkmsg").textContent = `청산 요청 실패 (${r.status})`; return; }
+    b.close_requested = true;                  /* 다음 brackets 메시지가 올 때까지 버튼을 잠근다 */
+    if (!/청산 요청/.test(b.status_ko || "")) b.status_ko = "청산 요청됨";
+    paintBrackets();
+  }catch(e){ $("brkmsg").textContent = "청산 요청 실패 — 연결을 확인하세요"; }
+}
+async function loadBrackets(){
+  try{
+    const j = await (await fetch("/api/brackets")).json();
+    if (j && (j.type === "brackets" || j.open)){ S.brk = j; paintBrackets(); scheduleDraw(); }
+  }catch(e){}
+}
+/* 아래 패널 탭 — 페이퍼 브래킷 | 실매매 포지션 */
+function setBrkTab(t){
+  S.brkTab = t === "pos" ? "pos" : "brk";
+  const pos = S.brkTab === "pos";
+  $("tab_brk").className = "tab" + (pos ? "" : " on");
+  $("tab_pos").className = "tab" + (pos ? " on" : "");
+  $("brkview").hidden = pos; $("brkstat").hidden = pos; $("brkmode").hidden = pos;   /* 실계좌 표에 PAPER 칩은 오해를 부른다 */
+  $("posview").hidden = !pos; $("posstat").hidden = !pos;
+}
+
+/* ── 주문 패널 (계약 §7) ───────────────────────────
+   계산(수량·노셔널·1R·가드)은 전부 서버 — 브라우저는 폼 값을 보내고 결과를 그린다. */
+const numv = (id) => { const v = String($(id).value ?? "").trim(); if (v === "") return null; const n = Number(v); return isFinite(n) ? n : NaN; };
+function orderBody(){
+  const b = {mode: "paper", symbol: S.symbol, direction: O.dir, stop: numv("o_stop")};
+  const e = numv("o_entry"), t1 = numv("o_tp1"), t2 = numv("o_tp2"), rp = numv("o_risk");
+  if (e != null) b.entry = e; if (t1 != null) b.tp1 = t1; if (t2 != null) b.tp2 = t2; if (rp != null) b.risk_pct = rp;
+  return b;
+}
+const orderValid = (b) => !!(b.symbol && b.stop != null && isFinite(b.stop) && b.stop > 0
+  && (b.entry === undefined || (isFinite(b.entry) && b.entry > 0)));
+function scheduleOrderPreview(){
+  if (O.timer) clearTimeout(O.timer);
+  O.timer = setTimeout(orderPreview, 300);
+}
+async function orderPreview(){
+  O.timer = null;
+  const b = orderBody();
+  if (!orderValid(b)){ O.preview = null; paintOrderPreview(); return; }
+  const seq = ++O.seq;
+  try{
+    const r = await fetch("/api/orders/preview", {method: "POST", headers: {"content-type": "application/json"},
+                                                   body: JSON.stringify(b)});
+    let j = null; try{ j = await r.json(); }catch(_){}
+    if (seq !== O.seq) return;                                /* 그새 폼이 바뀌었다 — 버린다 */
+    if (r.status === 404) O.preview = {error: "서버에 주문 미리보기가 없습니다 — th serve 재시작"};
+    else if (!r.ok && !(j && (j.reasons || []).length)) O.preview = {error: `미리보기 실패 (${r.status})`};
+    else O.preview = j || {error: "미리보기 응답이 비었습니다"};
+  }catch(e){ if (seq === O.seq) O.preview = {error: "미리보기 실패 — 연결을 확인하세요"}; }
+  paintOrderPreview();
+}
+function paintOrderPreview(){
+  const p = O.preview, b = orderBody(), prev = $("o_prev"), warn = $("o_warn"), rs = $("o_reasons");
+  const valid = orderValid(b);
+  const blocked = !valid || !p || p.error || (p.reasons && p.reasons.length) || O.busy || O.tab !== "paper";
+  $("o_submit").disabled = !!blocked;
+  const cell = (k, v, cls = "") => `<div><div class="pk">${k}</div><div class="pv ${cls}">${v}</div></div>`;
+  if (!p){
+    prev.innerHTML = `<span class="note dim2" style="grid-column:1/-1">${
+      valid ? "미리보기 계산 중…" : "손절가를 넣으면 수량 · 노셔널 · 1R 을 서버가 미리 계산합니다"}</span>`;
+    warn.innerHTML = ""; rs.innerHTML = ""; return;
+  }
+  if (p.error){
+    prev.innerHTML = `<span class="note dim2" style="grid-column:1/-1">—</span>`;
+    warn.innerHTML = ""; rs.innerHTML = `<li>${esc(p.error)}</li>`; return;
+  }
+  prev.innerHTML = cell("수량", nf(p.qty, 2))
+    + cell("노셔널", p.notional_usdt == null ? "—" : nf(p.notional_usdt, 0) + " USDT")
+    + cell("1R", p.r_unit_usdt == null ? "—" : nf(p.r_unit_usdt, 2) + " USDT")
+    + cell("손절폭", pf(p.stop_pct, 2), "down")
+    + cell("비용/R", p.cost_r == null ? "—" : nf(p.cost_r, 2), p.cost_r != null && p.cost_r >= 0.2 ? "warn" : "")
+    + cell("지갑", p.equity_usdt == null ? "—" : nf(p.equity_usdt, 0) + " USDT");
+  warn.innerHTML = (p.warnings || []).map(w => `<li>${esc(w)}</li>`).join("");
+  rs.innerHTML = (p.reasons || []).map(w => `<li>${esc(w)}</li>`).join("");
+}
+function setOrderMsg(text, cls){ const el = $("o_msg"); el.textContent = text || ""; el.className = cls || ""; }
+async function submitOrder(){
+  const b = orderBody();
+  if (O.tab !== "paper" || O.busy || !orderValid(b)) return;
+  const exp = numv("o_exp"); if (exp != null && isFinite(exp) && exp > 0) b.expire_s = Math.round(exp);
+  O.busy = true; $("o_submit").disabled = true; setOrderMsg("", "");
+  try{
+    const r = await fetch("/api/orders", {method: "POST", headers: {"content-type": "application/json"},
+                                          body: JSON.stringify(b)});
+    let j = null; try{ j = await r.json(); }catch(_){}
+    if (r.status === 403){ setOrderMsg("실거래 주문 경로가 없습니다", "bad"); return; }
+    if (r.status === 503){ setOrderMsg("페이퍼 엔진이 꺼져 있습니다 — th serve 재시작", "bad"); return; }
+    if (!r.ok){ setOrderMsg(`주문 실패 (${r.status})`, "bad"); return; }
+    if (j && j.ok){
+      setOrderMsg(`브래킷 열림 · ${j.bracket_id ?? "—"}`, "ok");
+      for (const id of ["o_entry", "o_stop", "o_tp1", "o_tp2"]) $(id).value = "";   /* 방향·위험% 는 남긴다 */
+      O.preview = null; ++O.seq;
+      loadBrackets();                                         /* 서버도 brackets 를 바로 뿌린다 */
+      return;
+    }
+    /* 가드 거절 (HTTP 200, ok:false) — 사유를 빨갛게, 아무것도 열지 않는다 */
+    O.preview = Object.assign({}, O.preview || {}, {reasons: (j && j.reasons && j.reasons.length) ? j.reasons : ["주문이 거절됐습니다"]});
+    setOrderMsg("가드에 걸려 열지 않았습니다", "bad");
+  }catch(e){ setOrderMsg("주문 실패 — 연결을 확인하세요", "bad"); }
+  finally{ O.busy = false; paintOrderPreview(); paintQuick(); }
+}
+/* 빠른 채우기 — 편의일 뿐, 전부 손으로 고칠 수 있다. 기준가 = 진입가(있으면) 아니면 현재가 */
+function refPrice(){
+  const e = numv("o_entry");
+  if (e != null && isFinite(e) && e > 0) return e;
+  return S.price != null ? S.price : (S.symbol ? (S.wprice[S.symbol] ?? null) : null);
+}
+const fmtPx = (v) => v == null ? "" : String(Number(v.toFixed(v < 10 ? 3 : 2)));
+function quickStop(pct){
+  const p = refPrice(); if (p == null) return;
+  $("o_stop").value = fmtPx(p * (1 + pct / 100)); onOrderInput();
+}
+function quickTp(id, k){
+  const p = refPrice(), s = numv("o_stop");
+  if (p == null || s == null || !(s > 0)) return;
+  const d = Math.abs(p - s);
+  $(id).value = fmtPx(O.dir === "LONG" ? p + k * d : p - k * d); onOrderInput();
+}
+function paintQuick(){
+  const lock = O.tab !== "paper", ref = refPrice(), s = numv("o_stop");
+  $("o_sl_m").disabled = lock || ref == null || O.dir !== "LONG";    /* LONG 은 아래에, SHORT 는 위에 */
+  $("o_sl_p").disabled = lock || ref == null || O.dir !== "SHORT";
+  const tpOff = lock || ref == null || s == null || !(s > 0);
+  $("o_tp1_q").disabled = tpOff; $("o_tp2_q").disabled = tpOff;
+}
+function setDir(d){
+  O.dir = d === "SHORT" ? "SHORT" : "LONG";
+  $("o_long").className = O.dir === "LONG" ? "on" : "";
+  $("o_short").className = O.dir === "SHORT" ? "on" : "";
+  onOrderInput();
+}
+function onOrderInput(){
+  O.preview = null;                       /* 지금 폼과 다른 값의 미리보기를 보여주면 안 된다 */
+  setOrderMsg("", "");
+  paintQuick(); paintOrderPreview(); scheduleOrderPreview();
+}
+function resetOrderForm(){
+  for (const id of ["o_entry", "o_stop", "o_tp1", "o_tp2"]) $(id).value = "";
+  O.preview = null; ++O.seq; setOrderMsg("", "");
+  paintQuick(); paintOrderPreview();
+}
+const ORDER_INPUTS = ["o_entry", "o_stop", "o_tp1", "o_tp2", "o_risk", "o_exp"];
+const ORDER_BTNS = ["o_long", "o_short", "o_sl_m", "o_sl_p", "o_tp1_q", "o_tp2_q"];
+function setOrderTab(t){
+  O.tab = t === "live" ? "live" : "paper";
+  const live = O.tab === "live";
+  $("o_tab_paper").className = "tab" + (live ? "" : " on");
+  $("o_tab_live").className = "tab" + (live ? " on" : "");
+  $("o_form").className = "of" + (live ? " locked" : "");
+  for (const id of ORDER_INPUTS.concat(ORDER_BTNS)) $(id).disabled = live;
+  $("o_paperbits").hidden = live;
+  $("o_lock").hidden = !live;
+  paintQuick(); paintOrderPreview();
+  if (live) loadGate();
+}
+async function loadGate(){
+  try{
+    const r = await fetch("/api/orders/gate");
+    O.gate = r.ok ? await r.json() : {error: `(${r.status})`};
+  }catch(e){ O.gate = {error: "연결"}; }
+  paintGate();
+}
+function paintGate(){
+  const g = O.gate, el = $("o_gate"), sum = $("o_gatesum");
+  if (!g){ el.innerHTML = `<li class="dim">게이트 조건을 불러오는 중…</li>`; sum.textContent = ""; return; }
+  const cond = g.conditions;
+  if (g.error || !Array.isArray(cond)){
+    el.innerHTML = `<li class="warn">게이트 조건을 못 읽었습니다 ${esc(g.error || "")} — 서버가 옛 버전일 수 있습니다</li>`;
+    sum.textContent = ""; return;
+  }
+  el.innerHTML = cond.map(c => `<li class="${c.met ? "up" : "down"}"><b>${c.met ? "✓" : "✗"}</b><span>${esc(c.text_ko)}</span></li>`).join("")
+    || `<li class="dim">조건 목록이 비어 있습니다</li>`;
+  const met = cond.filter(c => c.met).length;
+  sum.textContent = `${met}/${cond.length} 충족 · 실거래 ${g.live_allowed ? "허용" : "잠김"}`;
+}
+
+/* ── 차트 ─────────────────────────────────────────── */
+const PL=6, PR=62, PT=8, PB=16, MARGIN=8, MINC=20, MAXC=600;
+function allBars(){ return S.live ? S.bars.concat([liveWithEma()]) : S.bars; }
+/* 따라가기 중이면 살아있는 봉이 오른쪽 끝 + 여백 8봉 */
+function viewStart(total){
+  const v = S.view;
+  if (v.follow) v.start = total - v.count + MARGIN;
+  return v.start;
+}
+function clampStart(total){
+  const v = S.view, maxS = total - v.count + MARGIN, minS = Math.min(-MARGIN, maxS);
+  v.start = Math.max(minS, Math.min(maxS, Math.round(v.start)));
+}
+/* 포커스 종목 브래킷의 가로선 — 있으면 risk 의 SL/EN 대신 이걸 그린다 */
+function focusBrackets(){
+  return ((S.brk && S.brk.open) || []).filter(b => b.symbol === S.symbol);
+}
+function hlines(){
+  const out = [];
+  if (S.price != null) out.push({p: S.price, c: "--info", label: nf(S.price, 2), dash: null, live: true});
+  const fb = focusBrackets();
+  if (fb.length){
+    for (const b of fb){
+      if (b.tp1 != null) out.push({p: b.tp1, c: "--up", label: "TP1", dash: [4,3]});
+      if (b.tp2 != null) out.push({p: b.tp2, c: "--up", label: "TP2", dash: [4,3]});
+      if (b.entry != null) out.push({p: b.entry, c: "--dim", label: "EN 진입", dash: [2,3]});
+      if (b.stop != null) out.push({p: b.stop, c: "--down", label: "SL 손절", dash: [4,3]});
+    }
+  } else {
+    const pp = S.pos && (S.pos.items || []).find(i => i.symbol === S.symbol);
+    const r = pp ? {has_position: true, entry_price: pp.entry_price, stop_price: pp.stop_price} : (S.snap && S.snap.risk);
+    if (r && r.has_position){
+      if (r.entry_price) out.push({p: r.entry_price, c: "--dim", label: "EN 진입", dash: [2,3]});
+      if (r.stop_price) out.push({p: r.stop_price, c: "--down", label: "SL 손절", dash: [4,3]});
+    }
+  }
+  return out;
+}
+function paintOhlc(bar, isLive){
+  const el = $("ohlc");
+  if (!bar){ el.textContent = "—"; return; }
+  const cc = bar.c >= bar.o ? "up" : "down";
+  const t = new Date(bar.t), p = n => String(n).padStart(2,"0");
+  el.innerHTML = `O <b>${nf(bar.o,2)}</b> H <b>${nf(bar.h,2)}</b> L <b>${nf(bar.l,2)}</b> C <b class="${cc}">${nf(bar.c,2)}</b>`
+    + ` · <span class="dim2">${isLive ? "이 봉 매초 갱신" : `${p(t.getMonth()+1)}/${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`}</span>`;
+}
+function draw(){
+  const cv = $("chart"), ctx = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  /* 레이아웃 읽기는 프레임당 한 번 — 포인터 핸들러는 이 값을 재사용한다 */
+  const W = cv.clientWidth, H = cv.clientHeight;
+  const rect = cv.getBoundingClientRect ? cv.getBoundingClientRect() : {left:0, top:0};
+  S.geom = {left: rect.left, top: rect.top, W, H, w: Math.max(1, W-PL-PR), h: Math.max(1, H-PT-PB)};
+  $("btnlatest").hidden = !!S.view.follow;
+  if (!W || !H) return;
+  if (cv.width !== W*dpr || cv.height !== H*dpr){ cv.width = W*dpr; cv.height = H*dpr; }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+  const bars = allBars(), total = bars.length;
+  if (!total){
+    ctx.fillStyle = col("--dim2"); ctx.font = "12px monospace";
+    ctx.fillText("봉 데이터가 없습니다 — 수집 종목이면 th backfill 을 실행하세요", 12, 24);
+    paintOhlc(null); S.cross = null; return;
+  }
+  const w=S.geom.w, h=S.geom.h;
+  const v = S.view, count = v.count, start = viewStart(total);
+  const i0 = Math.max(0, start), i1 = Math.min(total, start + count);   /* 보이는 봉 [i0, i1) */
+  /* 가격축은 보이는 봉(+지표) + 현재가에 맞춘다. 멀리 있는 SL/TP 가로선까지 넣으면
+     봉이 가는 띠로 눌리므로, 봉 범위를 위아래 60% 넓힌 안에 드는 선만 넣고
+     밖에 있는 선은 축 끝에 작은 꼬리표(▲/▼)로만 알린다. */
+  let lo=Infinity, hi=-Infinity;
+  for (let i=i0;i<i1;i++){
+    const b = bars[i];
+    lo=Math.min(lo,b.l); hi=Math.max(hi,b.h);
+    for (const k of ["ema9","ema21","ema99","vwap"])
+      if (b[k]!=null){ lo=Math.min(lo,b[k]); hi=Math.max(hi,b[k]); }
+  }
+  if (S.price!=null){ lo=Math.min(lo,S.price); hi=Math.max(hi,S.price); }
+  if (!isFinite(lo)){ lo = 0; hi = 1; }
+  const ext=(hi-lo)*0.6||1, elo=lo-ext, ehi=hi+ext;
+  const lines=[], tags=[];
+  for (const l of hlines()){
+    if (l.live || (l.p>=elo && l.p<=ehi)){ lines.push(l); lo=Math.min(lo,l.p); hi=Math.max(hi,l.p); }
+    else tags.push(l);
+  }
+  const pad=(hi-lo)*0.05||1; lo-=pad; hi+=pad;
+  S.fit = {lo, hi, tags: tags.map(t => t.label)};
+  const slot = w/count;
+  const X=i=>PL+(i-start+0.5)*slot, Y=p=>PT+(hi-p)/(hi-lo)*h;
+
+  ctx.strokeStyle=col("--line"); ctx.fillStyle=col("--dim2");
+  ctx.font="10px monospace"; ctx.lineWidth=1;
+  for (let i=0;i<=4;i++){
+    const p=lo+(hi-lo)*i/4, y=Math.round(Y(p))+0.5;
+    ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PL+w,y); ctx.stroke();
+    ctx.fillText(p.toFixed(2), PL+w+6, y+3);
+  }
+  /* 시간축 */
+  const step = Math.max(1, Math.ceil(count/6));
+  ctx.textAlign = "center";
+  for (let i=i0;i<i1;i++){
+    if (i % step) continue;
+    const t = new Date(bars[i].t), p = n => String(n).padStart(2,"0");
+    ctx.fillText(`${p(t.getHours())}:${p(t.getMinutes())}`, X(i), H-3);
+  }
+  ctx.textAlign = "start";
+
+  const bw=Math.max(1,slot*0.6), cUp=col("--up"), cDown=col("--down"), cPanel=col("--panel");
+  for (let i=i0;i<i1;i++){
+    const b=bars[i], up=b.c>=b.o;
+    ctx.strokeStyle=ctx.fillStyle=up?cUp:cDown;
+    const x=Math.round(X(i))+0.5;
+    ctx.beginPath(); ctx.moveTo(x,Y(b.h)); ctx.lineTo(x,Y(b.l)); ctx.stroke();
+    const t=Y(Math.max(b.o,b.c)), bo=Y(Math.min(b.o,b.c));
+    if (b.live){ /* 아직 안 닫힌 봉 — 테두리만 그려서 "만들어지는 중"임을 보여준다 */
+      ctx.fillStyle=cPanel; ctx.fillRect(x-bw/2,t,bw,Math.max(1,bo-t));
+      ctx.strokeRect(x-bw/2+0.5,t+0.5,Math.max(1,bw-1),Math.max(1,bo-t-1));
+    } else {
+      ctx.fillRect(x-bw/2,t,bw,Math.max(1,bo-t));
+    }
+  }
+  const line=(k,c,lw)=>{
+    ctx.strokeStyle=c; ctx.lineWidth=lw; ctx.beginPath(); let on=false;
+    for(let i=Math.max(0,i0-1);i<Math.min(total,i1+1);i++){
+      const val=bars[i][k];
+      if(val==null){on=false;continue;}
+      on?ctx.lineTo(X(i),Y(val)):(ctx.moveTo(X(i),Y(val)),on=true);
+    }
+    ctx.stroke(); ctx.lineWidth=1;
+  };
+  ctx.save(); ctx.beginPath(); ctx.rect(PL,0,w,H); ctx.clip();
+  line("ema9",col("--info"),1); line("ema21",col("--warn"),1);
+  line("ema99",col("--ema99"),1.4); line("vwap",col("--fg"),1);
+  ctx.restore();
+
+  /* 현재가 · 손절 · 진입 · 목표 가로선 — 실시간으로 움직인다 */
+  for (const l of lines){
+    if (l.p<lo||l.p>hi) continue;
+    const c = col(l.c), y=Math.round(Y(l.p))+0.5;
+    ctx.save(); ctx.setLineDash(l.dash||[]); ctx.strokeStyle=c; ctx.beginPath();
+    ctx.moveTo(PL,y); ctx.lineTo(PL+w,y); ctx.stroke(); ctx.restore();
+    ctx.fillStyle=c; ctx.fillRect(PL+w+2,y-8,PR-4,16);
+    ctx.fillStyle=col("--bg"); ctx.font="bold 10px monospace";
+    ctx.fillText(l.label, PL+w+6, y+3.5);
+  }
+  /* 화면 밖 가로선 — 축 위/아래 끝에 꼬리표만 (선은 안 그린다) */
+  let ty=PT+2, by=PT+h-14;
+  ctx.font="bold 10px monospace";
+  for (const t of tags){
+    const above=t.p>hi, y=above?ty:by, c=col(t.c);
+    ctx.fillStyle=c; ctx.fillRect(PL+w-32,y,PR+30,13);
+    ctx.fillStyle=col("--bg"); ctx.fillText(`${above?"▲":"▼"} ${t.label.split(" ")[0]} ${nf(t.p,2)}`, PL+w-29, y+10);
+    if (above) ty+=15; else by-=15;
+  }
+
+  /* 크로스헤어 — 봉에 맞춘 세로선 + 커서 높이의 가로선, 양 축에 꼬리표 */
+  const hv = S.hover != null && S.hover >= i0 && S.hover < i1 ? S.hover : null;
+  const cr = S.cross;
+  const inPlot = cr && cr.x >= PL && cr.x <= PL+w && cr.y >= PT && cr.y <= PT+h;
+  if (cr){
+    cr.price = inPlot ? hi - (cr.y-PT)/h*(hi-lo) : null;
+    cr.t = hv != null ? bars[hv].t : null;
+  }
+  if (hv != null || inPlot){
+    ctx.save(); ctx.setLineDash([3,3]); ctx.strokeStyle=col("--dim2"); ctx.lineWidth=1;
+    if (hv != null){
+      const x=Math.round(X(hv))+0.5;
+      ctx.beginPath(); ctx.moveTo(x,PT); ctx.lineTo(x,PT+h); ctx.stroke();
+      const t = new Date(bars[hv].t), p = n => String(n).padStart(2,"0");
+      ctx.setLineDash([]); ctx.fillStyle=col("--dim"); ctx.fillRect(x-21, PT+h+1, 42, 14);
+      ctx.fillStyle=col("--bg"); ctx.font="bold 10px monospace"; ctx.textAlign="center";
+      ctx.fillText(`${p(t.getHours())}:${p(t.getMinutes())}`, x, PT+h+11); ctx.textAlign="start";
+      ctx.setLineDash([3,3]);
+    }
+    if (inPlot){
+      const y=Math.round(cr.y)+0.5;
+      ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PL+w,y); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle=col("--dim"); ctx.fillRect(PL+w+2,y-8,PR-4,16);
+      ctx.fillStyle=col("--bg"); ctx.font="bold 10px monospace";
+      ctx.fillText(nf(cr.price,2), PL+w+6, y+3.5);
+    }
+    ctx.restore();
+  }
+  paintOhlc(hv != null ? bars[hv] : bars[total-1], !!(hv != null ? bars[hv] : bars[total-1]).live);
+}
+
+/* ── 팬 / 줌 (계약 §4) ───────────────────────────── */
+function chartGeom(){
+  if (S.geom && S.geom.W) return {rect: {left: S.geom.left, top: S.geom.top}, w: S.geom.w};
+  const cv = $("chart"), rect = cv.getBoundingClientRect();     /* 아직 한 번도 안 그렸을 때만 */
+  return {rect, w: Math.max(1, (cv.clientWidth || rect.width) - PL - PR)};
+}
+function chartWheel(e){
+  if (e.preventDefault) e.preventDefault();
+  const {rect, w} = chartGeom(), v = S.view, total = allBars().length;
+  const x = (e.clientX ?? rect.left) - rect.left - PL;
+  const start = viewStart(total);
+  const ci = start + x / (w / v.count);                     /* 커서 아래 봉 (실수) */
+  const factor = e.deltaY > 0 ? 1.15 : 1/1.15;
+  const nc = Math.max(MINC, Math.min(MAXC, Math.round(v.count * factor)));
+  if (nc === v.count) return;
+  v.count = nc;
+  if (!v.follow){ v.start = ci - x / (w / nc); clampStart(total); }
+  scheduleDraw();
+}
+function chartDown(e){
+  const {rect} = chartGeom(), total = allBars().length;
+  S.view.start = viewStart(total); S.view.follow = false;   /* 드래그 시작 = 따라가기 해제 */
+  S.drag = {x0: (e.clientX ?? rect.left), start0: S.view.start};
+  const cv = $("chart");
+  if (cv.setPointerCapture && e.pointerId != null) try{ cv.setPointerCapture(e.pointerId); }catch(_){}
+  cv.classList.add("drag");
+  scheduleDraw();
+}
+function chartMove(e){
+  const {rect, w} = chartGeom(), total = allBars().length;
+  const x = (e.clientX ?? rect.left) - rect.left;
+  if (S.drag){
+    S.view.start = S.drag.start0 - (x - S.drag.x0) / (w / S.view.count);
+    clampStart(total);
+    if (S.view.start <= 0) loadMore();                      /* 왼쪽 끝 — 봉을 더 받아온다 */
+  }
+  const idx = Math.floor(viewStart(total) + (x - PL) / (w / S.view.count));
+  S.hover = (idx >= 0 && idx < total) ? idx : null;
+  S.cross = {x, y: (e.clientY ?? rect.top) - rect.top, price: null, t: null};   /* 값은 draw() 가 채운다 */
+  scheduleDraw();
+}
+function chartUp(){
+  S.drag = null; $("chart").classList.remove("drag");
+  const total = allBars().length;
+  clampStart(total); scheduleDraw();
+}
+function chartLeave(){ S.hover = null; S.cross = null; S.drag = null; $("chart").classList.remove("drag"); scheduleDraw(); }
+function goLatest(){ S.view.follow = true; S.hover = null; scheduleDraw(); }
+function loadMore(){
+  if (S.loadingMore || S.limit >= 1200) return;
+  S.limit = Math.min(1200, S.limit * 3);
+  S.loadingMore = true;
+  loadChart();
+}
+
+/* ── 살아있는 봉 — 호가가 올 때마다 마지막 캔들을 매초 갱신한다 ──
+   서버는 닫힌 1분봉으로만 봉을 만든다. 그래서 지금 만들어지는 중인 N분봉은
+   서버가 준 부분 묶음(있으면)에서 출발해 브라우저가 호가로 고가·저가·종가를 늘려간다. */
+function applyTick(price, tsMs){
+  if (price == null || !isFinite(price)) return;
+  const tfms = S.tf*60000, key = Math.floor(tsMs/tfms);
+  const last = S.bars.length ? S.bars[S.bars.length-1] : null;
+  const lastKey = last ? Math.floor(Date.parse(last.t)/tfms) : -1;
+  if (key <= lastKey) return;                     /* 이미 닫힌 봉 구간의 호가 — 무시 */
+  const liveKey = S.live ? Math.floor(Date.parse(S.live.t)/tfms) : -1;
+  if (liveKey !== key){
+    /* 새 봉이 시작됐다. 이전 살아있는 봉은 서버가 진짜 값을 줄 때까지 임시로 닫아둔다 */
+    if (S.live && liveKey > lastKey) S.bars.push(Object.assign({}, S.live, {live:false, provisional:true}));
+    const o = S.live ? S.live.c : (last ? last.c : price);
+    S.live = {t:new Date(key*tfms).toISOString(), o, h:Math.max(o,price), l:Math.min(o,price), c:price, v:0, live:true};
+    setTimeout(loadChart, 2500);                   /* 방금 닫힌 봉의 진짜 값을 곧 받아온다 */
+  } else {
+    S.live.h = Math.max(S.live.h, price);
+    S.live.l = Math.min(S.live.l, price);
+    S.live.c = price;
+    if (S.live.o == null) S.live.o = price;
+  }
+}
+/* 살아있는 봉의 EMA 는 마지막 닫힌 봉 값에서 한 걸음 잠정 계산 — 닫히면 서버 값으로 대체된다 */
+function liveWithEma(){
+  const b = Object.assign({}, S.live);
+  const last = S.bars.length ? S.bars[S.bars.length-1] : null;
+  for (const [k,n] of [["ema9",9],["ema21",21],["ema99",99]]){
+    const prev = last ? last[k] : null;
+    b[k] = (prev != null) ? prev + (2/(n+1))*(b.c - prev) : null;
+  }
+  b.vwap = null;
+  return b;
+}
+
+async function loadChart(){
+  const sym = S.symbol, tf = S.tf, limit = S.limit;
+  try{
+    const q = `tf=${tf}&limit=${limit}` + (sym ? `&symbol=${encodeURIComponent(sym)}` : "");
+    const j = await (await fetch(`/api/candles?${q}`)).json();
+    if ((sym && sym !== S.symbol) || tf !== S.tf) return;   /* 요청 중 종목·주기가 바뀜 — 버린다 */
+    if (!S.symbol && j.symbol) S.symbol = j.symbol;
+    const all = j.bars || [];
+    const srvLive = all.length && all[all.length-1].live ? all[all.length-1] : null;
+    const srvClosed = srvLive ? all.slice(0, -1) : all;
+    const oldFirst = S.bars.length ? Date.parse(S.bars[0].t) : null;
+    /* 바꿔치기가 아니라 합친다. 서버(DB)가 뒤처져 있을 때 — 실제로 90분 멈춘 적이 있다 —
+       호가로 만든 임시 봉과 살아있는 봉을 서버 봉으로 덮어쓰면, 그 사이 움직임이
+       마지막 서버 종가에서 현재가까지 한 개의 거대한 봉으로 뭉개진다.
+       서버가 이제 덮는 구간만 서버 값으로 바꾸고, 그보다 새 임시 봉·살아있는 봉은 지킨다. */
+    const tfms = tf*60000, keyOf = (b) => Math.floor(Date.parse(b.t)/tfms);
+    const lastClosedKey = srvClosed.length ? keyOf(srvClosed[srvClosed.length-1]) : -1;
+    const keep = S.bars.filter(b => b.provisional && keyOf(b) > lastClosedKey);
+    const keepLastKey = keep.length ? keyOf(keep[keep.length-1]) : lastClosedKey;
+    const liveKey = S.live ? keyOf(S.live) : -1, srvLiveKey = srvLive ? keyOf(srvLive) : -1;
+    let live = null;
+    if (S.live && liveKey > keepLastKey && liveKey >= srvLiveKey){
+      /* 우리 살아있는 봉이 서버보다 새것(또는 같은 구간) — 새로 만들지 않는다 */
+      live = (srvLive && srvLiveKey === liveKey)
+        ? Object.assign({}, srvLive, {h: Math.max(srvLive.h, S.live.h), l: Math.min(srvLive.l, S.live.l), c: S.live.c, live: true})
+        : S.live;
+    } else if (srvLive && srvLiveKey > keepLastKey){
+      live = srvLive;
+    }
+    S.bars = srvClosed.concat(keep);
+    S.live = live;
+    /* 왼쪽에 봉이 더 붙었으면 보고 있던 자리가 밀리지 않게 시작점을 옮긴다 */
+    if (oldFirst != null && !S.view.follow)
+      S.view.start += S.bars.filter(b => Date.parse(b.t) < oldFirst).length;
+    if (S.price != null) applyTick(S.price, S.quoteAt || Date.now());
+    paintSym(); scheduleDraw();
+  }catch(e){ /* 다음 주기에 다시 시도 */ }
+  finally{ S.loadingMore = false; }
+}
+
+/* ── 하단 ─────────────────────────────────────────── */
+async function loadFoot(){
+  try{
+    const j = await (await fetch("/api/health")).json();
+    if (j && j.mode){ S.mode = j.mode; if (!S.symbol && j.symbol) S.symbol = j.symbol; }
+    if (j && j.ok !== undefined) S.serverOld = !(Number(j.ui) >= 3);   /* v2.2 서버는 ui:3 을 준다 */
+    /* 위험 % 기본값 — health 가 risk_pct 를 주면 그걸, 아니면 0.5. 사용자가 손댔으면 건드리지 않는다 */
+    if (j && j.risk_pct != null && isFinite(Number(j.risk_pct)) && !O.riskTouched) $("o_risk").value = String(j.risk_pct);
+  }catch(e){}
+  if (O.tab === "live") loadGate();
+  paintOldServer();
+  $("fmode").textContent = S.mode == null ? "TH_EXECUTION_MODE=—"
+    : `TH_EXECUTION_MODE=${S.mode} · ${S.mode === "paper" ? "실거래 잠김" : "실거래"}`;
+  try{
+    const j = await (await fetch("/api/paper")).json();
+    $("fpaper").innerHTML = j.available
+      ? `<b>기록</b> ${j.journal_closed}/${j.journal_total}건` +
+        (j.journal_expectancy_r != null ? ` · 기대값 ${sf(j.journal_expectancy_r,2,"R")}` : "") +
+        (j.enough_sample ? "" : ` <span class="dim">(30건 미만 — 판단 불가)</span>`)
+      : "<b>기록</b> —";
+  }catch(e){}
+  try{
+    const j = await (await fetch("/api/coverage")).json();
+    const items = j.items || [];
+    const bars = items.find(i => i.name === "1분봉") || items[0];
+    const bad = items.filter(i => i.status !== "ok" && i.status !== "충분").length;
+    const days = bars && bars.first && bars.last ? Math.round((Date.parse(bars.last)-Date.parse(bars.first))/86400000) : null;
+    $("fdata").innerHTML = `<b>데이터</b> 1m ${days == null ? "—" : days + "일"}`
+      + (bars && bars.last ? ` · 마지막 갱신 ${hms(Date.parse(bars.last))}` : "")
+      + (bad ? ` · <span class="warn">${bad}개 소스 부족</span>` : "");
+  }catch(e){}
+  if (!S.eventFromSnap){
+    try{
+      const j = await (await fetch("/api/events?days=3")).json();
+      const e = (j.events||[])[0];
+      S.eventAt = e ? Date.parse(e.at) : null;
+      S.eventName = e ? e.name : null;
+    }catch(e){}
+  }
+}
+
+/* ── 옛 서버 감지 — health 에 ui:2 가 없거나, 붙은 지 15초가 지나도 watchlist 가 안 오면 ── */
+const OLD_SERVER_KO = "서버가 옛 버전입니다 — `th serve` 를 껐다가 다시 켜세요";
+function serverLooksOld(){
+  if (S.serverOld === true) return true;
+  if (S.watch) return false;
+  return !!(S.connected && S.connectedAt && Date.now() - S.connectedAt > 15000);
+}
+function paintOldServer(){
+  const old = serverLooksOld(), el = $("wold");
+  el.hidden = !old;
+  el.textContent = old ? OLD_SERVER_KO : "";
+}
+
+/* ── 매초 ─────────────────────────────────────────── */
+function everySecond(){
+  paintHead(); paintSession(); paintRisk(); paintDaily(); paintDiscipline(); paintBracketR(); paintPositionsLive(); paintOldServer();
+  const age = S.snapAt ? Math.round((Date.now()-S.snapAt)/1000) : null;
+  const qage = S.quoteAt ? (Date.now()-S.quoteAt)/1000 : null;
+  $("fconn").innerHTML = !S.connected
+    ? `<b class="down">연결 끊김</b> — 다시 붙는 중`
+    : `<b>연결</b> ${S.fresh && qage != null ? `실시간 · ${nf(qage,1)}초 전` : "시세 없음"}`
+      + ` · 계정 ${age==null?"—":age+"초 전"}${age!=null&&age>15?' <span class="warn">오래됨</span>':""}`
+      + (serverLooksOld() ? ` · <span class="warn">${esc(OLD_SERVER_KO)}</span>` : "");
+  $("fev").innerHTML = S.eventName
+    ? `<b>다음 이벤트</b> ${esc(S.eventName)} · ${dur((S.eventAt-Date.now())/1000)}`
+    : `<b>다음 이벤트</b> 없음`;
+}
+
+/* ── WebSocket ────────────────────────────────────── */
+function connect(){
+  const ws = new WebSocket((location.protocol==="https:"?"wss":"ws")+`://${location.host}/ws`);
+  let ping=null;
+  ws.onopen = () => { S.connected = true; S.connectedAt = Date.now(); ping = setInterval(()=>{try{ws.send("p")}catch(e){}},20000); };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "tick"){
+      if (m.symbol && S.symbol && m.symbol !== S.symbol) return;   /* 종목 바꾼 직후 남은 옛 호가 */
+      S.fresh = !!m.fresh;
+      if (m.fresh){
+        S.prevPrice = S.price; S.price = m.price; S.quoteAt = Date.parse(m.ts);
+        applyTick(m.price, S.quoteAt);
+      }
+      $("bid").textContent = m.bid!=null?nf(m.bid,2):"—";
+      $("ask").textContent = m.ask!=null?nf(m.ask,2):"—";
+      $("spr").textContent = m.spread_bps!=null?nf(m.spread_bps,2)+"bp":"—";
+      scheduleDraw();
+      return;
+    }
+    if (m.type === "error"){ return; }        /* 값은 그대로 두고 점만 노랗게 */
+    if (m.type === "focus"){ setFocus(m.symbol); return; }
+    if (m.type === "watchlist"){
+      S.watch = m; if (S.serverOld == null) S.serverOld = false;
+      for (const i of (m.items || [])) if (i.price != null) S.wprice[i.symbol] = i.price;
+      if (!S.symbol && m.focus) S.symbol = m.focus;
+      else if (m.focus && m.focus !== S.symbol && !S.focusPending) setFocus(m.focus);   /* 서버가 진짜 상태 */
+      paintWatch(); paintBracketR();
+      return;
+    }
+    if (m.type === "market"){
+      if (m.symbol && S.symbol && m.symbol !== S.symbol) return;
+      S.market = m; S.fundingAt = m.next_funding_at ? Date.parse(m.next_funding_at) : null;
+      paintHead();
+      return;
+    }
+    if (m.type === "brackets"){
+      S.brk = m; if (m.mode) S.mode = m.mode;
+      $("brkmsg").textContent = "";
+      paintBrackets(); scheduleDraw();
+      return;
+    }
+    if (m.type === "positions"){ applyPositions(m); return; }
+    if (m.type !== "snapshot" && m.type != null) return;
+    S.snap = m; S.snapAt = Date.now();
+    if (!S.symbol && m.symbol) S.symbol = m.symbol;
+    paintSym();
+    /* 끝나는 시각이 없는 레짐(주말·공휴일 등)이면 카운트다운을 지운다 —
+       안 지우면 이전 레짐의 남은 시간이 새 레짐 이름 옆에서 계속 줄어든다 */
+    if (m.session){
+      S.sessionEndsAt = (m.session.regime_ends_in_sec != null)
+        ? Date.now() + m.session.regime_ends_in_sec*1000
+        : null;
+      if (m.session.next_event_in_sec != null && m.session.next_event_name){
+        S.eventAt = Date.now() + m.session.next_event_in_sec*1000;
+        S.eventName = m.session.next_event_name; S.eventFromSnap = true;
+      } else if (S.eventFromSnap){ S.eventAt = null; S.eventName = null; }
+    }
+    if (m.discipline) applyDiscipline(m.discipline);
+    paintAlerts(); paintReasons(); paintDiscipline(); paintSession(); scheduleDraw();
+  };
+  ws.onclose = () => { S.connected=false; clearInterval(ping); setTimeout(connect,1500); };
+  ws.onerror = () => { try{ws.close()}catch(e){} };
+}
+
+/* ── 이벤트 연결 ──────────────────────────────────── */
+document.querySelectorAll("#tfs .tb[data-tf]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tfs .tb[data-tf]").forEach(x=>x.removeAttribute("aria-selected"));
+  b.setAttribute("aria-selected","true");
+  S.tf = Number(b.dataset.tf);
+  S.live = null; S.bars = []; S.hover = null; S.limit = 200;
+  S.view = {start: 0, count: S.view.count, follow: true};
+  scheduleDraw(); loadChart();
+});
+$("btnlatest").addEventListener("click", goLatest);
+{
+  const cv = $("chart");
+  cv.addEventListener("wheel", chartWheel, {passive: false});
+  cv.addEventListener("pointerdown", chartDown);
+  cv.addEventListener("pointermove", chartMove);
+  cv.addEventListener("pointerup", chartUp);
+  cv.addEventListener("pointercancel", chartUp);
+  cv.addEventListener("pointerleave", chartLeave);
+  cv.addEventListener("dblclick", goLatest);
+}
+$("wsort").addEventListener("click", () => { S.wsort = S.wsort === "chg" ? "sym" : "chg"; paintWatch(); });
+$("wq").addEventListener("input", paintWatch);
+$("wl").addEventListener("click", (e) => {
+  const row = e.target && e.target.closest ? e.target.closest(".wr") : null;
+  if (row && row.dataset && row.dataset.sym) requestFocus(row.dataset.sym);
+});
+$("symbtn").addEventListener("click", (e) => { e.stopPropagation(); const m = $("symmenu"); m.hidden = !m.hidden; });
+$("symmenu").addEventListener("click", (e) => {
+  const row = e.target && e.target.closest ? e.target.closest("[data-sym]") : null;
+  $("symmenu").hidden = true;
+  if (row && row.dataset && row.dataset.sym) requestFocus(row.dataset.sym);
+});
+document.addEventListener("click", () => { $("symmenu").hidden = true; });
+$("brkbody").addEventListener("click", (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest(".bclose") : null;
+  if (btn && !btn.disabled && btn.dataset && btn.dataset.id) closeBracket(btn.dataset.id);
+});
+$("wgroups").addEventListener("click", (e) => {
+  const b = e.target && e.target.closest ? e.target.closest("[data-g]") : null;
+  if (b && b.dataset && b.dataset.g) setWatchGroup(b.dataset.g);
+});
+$("tab_brk").addEventListener("click", () => setBrkTab("brk"));
+$("tab_pos").addEventListener("click", () => setBrkTab("pos"));
+$("posbody").addEventListener("click", (e) => {
+  const row = e.target && e.target.closest ? e.target.closest(".prow") : null;
+  if (row && row.dataset && row.dataset.sym) requestFocus(row.dataset.sym);
+});
+/* 주문 패널 */
+$("o_tab_paper").addEventListener("click", () => setOrderTab("paper"));
+$("o_tab_live").addEventListener("click", () => setOrderTab("live"));
+$("o_long").addEventListener("click", () => setDir("LONG"));
+$("o_short").addEventListener("click", () => setDir("SHORT"));
+for (const id of ORDER_INPUTS) $(id).addEventListener("input", onOrderInput);
+$("o_risk").addEventListener("input", () => { O.riskTouched = true; });
+$("o_sl_m").addEventListener("click", () => quickStop(-1));
+$("o_sl_p").addEventListener("click", () => quickStop(+1));
+$("o_tp1_q").addEventListener("click", () => quickTp("o_tp1", 1.5));
+$("o_tp2_q").addEventListener("click", () => quickTp("o_tp2", 3));
+$("o_submit").addEventListener("click", submitOrder);
+$("o_form").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("o_submit").disabled) submitOrder(); });
+window.addEventListener("resize", scheduleDraw);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { refreshTheme(); scheduleDraw(); });
+refreshTheme();
+
+connect();
+loadChart();     setInterval(loadChart, 15000);
+loadBrackets();
+loadFoot();      setInterval(loadFoot, 60000);
+paintWatch();    paintBrackets();   paintDiscipline();   paintPositions();
+if (!String($("o_risk").value || "").trim()) $("o_risk").value = "0.5";   /* 기본값 — health 가 risk_pct 를 주면 덮는다 */
+if (!String($("o_exp").value || "").trim()) $("o_exp").value = "300";
+setOrderTab("paper"); setDir("LONG");
+setInterval(everySecond, 1000);
+everySecond();
+</script>
+</body>
+</html>

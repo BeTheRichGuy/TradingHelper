@@ -1,0 +1,33 @@
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+data/
+logs/
+
+# 자동 수집 스냅샷 — `th calendar sync` 가 만든다
+src/th/sessions/data/events.generated.yaml
+*.log
+*.parquet
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 원시 데이터 (수백 MB) — git 에 넣지 않는다
+dataset/
+_review_src.zip
+_th_fixes.zip
+_docs_patch.zip
