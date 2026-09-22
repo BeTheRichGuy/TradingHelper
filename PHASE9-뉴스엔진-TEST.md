@@ -16,12 +16,13 @@
 ```powershell
 cd C:\Users\nemo0\source\TradingHelper
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev,web,news]"     # 새 하위 패키지 th.news 는 편집 가능 설치를 다시 해야 잡힌다
-th migrate                            # 008_news 적용
-python -m pytest -q                   # 0 failed (뉴스 테스트 56개 포함)
+python -m pip install -e ".[dev,web,news]"   # 새 하위 패키지 th.news 는 편집 가능 설치를 다시 해야 잡힌다
+th migrate                                    # 008_news 적용
+python -m pytest -q                           # 0 failed (뉴스 테스트 58개 포함)
 ```
 
-`pip install` 이 `th.exe` 를 못 바꾼다고 하면 켜 둔 `th stream`/`th serve` 때문이다. 패키지 등록은 됐으니 무시해도 된다.
+- **`pip` 대신 `python -m pip`** 로 친다. venv 가 `trading-helper` 폴더 시절에 만들어져 `pip.exe`·`th.exe` 같은 실행 파일 안에 옛 경로가 박혀 있을 수 있다. `th` 가 `No module named 'th'` 로 죽으면 그게 원인이고, 위 재설치가 `th.exe` 를 다시 만든다.
+- 재설치는 **`th stream`·`th serve` 를 전부 끈 뒤에** 한다. 켜 둔 채면 `th.exe` 가 잠겨 있어 재설치가 중간에 실패한다.
 
 ### 1-2. Claude API 키 — **Max 플랜과 별개다** (§5)
 
