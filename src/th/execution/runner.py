@@ -76,6 +76,8 @@ class OpenRequest:
     """None 이면 계정 잔고에서 읽는다. CLI 의 `--equity` 가 여기로 들어온다."""
     setup_id: str = ""
     """어떤 규칙이 낸 주문인가. 손주문은 빈 문자열, 시그널 엔진은 `ma5m.SETUP_ID`."""
+    stop_max_pct: float | None = None
+    """요청별 손절 상한(%). 뉴스 엔진이 5 를 준다. 가드의 절대 상한(5%)은 넘길 수 없다."""
 
     @classmethod
     def from_dict(cls, body: dict[str, Any] | None) -> OpenRequest:
@@ -99,6 +101,7 @@ class OpenRequest:
             reason=str(b.get("reason") or ""),
             equity_usdt=num("equity_usdt"),
             setup_id=str(b.get("setup_id") or ""),
+            stop_max_pct=num("stop_max_pct"),
         )
 
 
@@ -243,6 +246,22 @@ class PaperRunner:
     @property
     def open_count(self) -> int:
         return self.mgr.open_count
+
+    def open_notional(self, symbol: str | None = None) -> float:
+        """열린 브래킷의 노셔널 합계(USDT). 체결분은 평균가, 대기 지정가는 지정가로 센다 — 대기도 노출이다."""
+        total = 0.0
+        for st in self.mgr.states.values():
+            b = st.bracket
+            if symbol and b.symbol != symbol.upper():
+                continue
+            if st.has_position and st.avg_entry:
+                total += abs(st.position_qty) * float(st.avg_entry)
+            elif b.entry_price:
+                total += b.qty * float(b.entry_price)
+            else:
+                q = self.last_quote.get(b.symbol)
+                total += b.qty * (q.mid if q is not None else 0.0)
+        return total
 
     def feed_symbols(self) -> set[str]:
         """이번 반복에 시세를 먹일 종목 — 열린 브래킷의 종목 + 포커스(수집 종목일 때만)."""
@@ -407,11 +426,11 @@ class PaperRunner:
         if not symbol:
             p.reasons.append("종목이 없습니다")
             return p
-        if self.symbols and symbol not in self.symbols:
-            p.reasons.append(
-                f"{symbol} 은 수집 종목(TH_SYMBOLS)이 아닙니다 — 시세가 없어 페이퍼 체결을 판정할 수 없습니다"
-            )
-            return p
+        # 수집 종목이 아니면 `quotes.latest_quote` 가 바이낸스 공개 호가로 폴백한다 (docs/17 §5).
+        # 폴백도 실패하면 아래에서 예전 문장 그대로 거절한다.
+        foreign = bool(self.symbols and symbol not in self.symbols)
+        if foreign:
+            p.warnings.append(f"{symbol} 은 수집 종목이 아닙니다 — 바이낸스 공개 호가로 체결을 판정합니다")
         if not req.stop or req.stop <= 0:
             p.reasons.append("손절가가 없다")
             return p
@@ -434,8 +453,11 @@ class PaperRunner:
             q = await quotes.latest_quote(symbol)
         except Exception:  # noqa: BLE001
             log.debug("시세 조회 실패", exc_info=True)
-        if q is None and entry_px is None:
-            p.reasons.append("시세를 못 읽었습니다 — th stream 이 돌고 있는지 확인하세요")
+        if q is None and (entry_px is None or foreign):
+            p.reasons.append(
+                f"{symbol} 은 수집 종목(TH_SYMBOLS)이 아닙니다 — 시세가 없어 페이퍼 체결을 판정할 수 없습니다"
+                if foreign else "시세를 못 읽었습니다 — th stream 이 돌고 있는지 확인하세요"
+            )
             return p
         if q is None:
             p.warnings.append("현재 시세가 없어 지정가를 기준으로 계산했습니다")
@@ -489,6 +511,8 @@ class PaperRunner:
             daily_realized_r=daily_r, daily_unknown=daily_unknown, daily_locked=locked,
             open_bracket_count=open_count, max_open_brackets=self.max_open_brackets,
             session_blocked=blocked, session_reason=block_reason,
+            stop_max_pct=req.stop_max_pct,
+            open_notional_usdt=self.open_notional(), symbol_open_notional_usdt=self.open_notional(symbol),
         )
         p.guard_input = inp
         g = check(inp)

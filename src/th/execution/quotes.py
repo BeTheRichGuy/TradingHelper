@@ -10,22 +10,53 @@
 
 시세가 낡았으면 `None` 을 돌려준다. **낡은 값으로 체결을 만들어내면 안 된다** —
 그건 페이퍼 성적을 실제보다 좋게 만드는 가장 흔한 방법이다.
+
+v3.0 (docs/17 §5): **수집 종목(TH_SYMBOLS)이 아닌** 종목은 바이낸스 공개 `bookTicker` + 공개 1분봉으로
+폴백한다. 수집 종목은 폴백하지 않는다 — 스트림이 끊겼을 때 "시세 끊김" 경고가 조용히 사라지면 안 된다.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from .. import db
+from ..config import get_settings
 from ..logging_setup import get_logger
 from .paper import Quote
 
 log = get_logger(__name__)
 
 MAX_AGE_S = 90        # 이보다 낡은 호가는 쓰지 않는다
+PUBLIC_BAR_CACHE_S = 30   # 공개 1분봉 고저는 이만큼 캐시한다 (호가는 매번 받는다)
+
+_public_api: Any = None
+_bar_cache: dict[str, tuple[datetime, float | None, float | None, datetime | None]] = {}
 
 
-async def latest_quote(symbol: str, *, max_age_s: int = MAX_AGE_S) -> Quote | None:
+def set_public_api(api: Any) -> None:
+    """폴백에 쓸 바이낸스 공개 클라이언트. 서버가 자기 것을 넣어 준다. 없으면 필요할 때 만든다."""
+    global _public_api
+    _public_api = api
+
+
+def _api() -> Any:
+    global _public_api
+    if _public_api is None:
+        from ..exchange.binance_rest import BinanceFutures
+        _public_api = BinanceFutures()
+    return _public_api
+
+
+def public_allowed(symbol: str) -> bool:
+    """수집 종목이 아닐 때만 공개 호가로 폴백한다."""
+    try:
+        return symbol.upper() not in get_settings().symbols
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _db_quote(symbol: str, *, max_age_s: int) -> Quote | None:
     now = datetime.now(UTC)
 
     rows = await db.fetch(
@@ -57,3 +88,44 @@ async def latest_quote(symbol: str, *, max_age_s: int = MAX_AGE_S) -> Quote | No
 
     return Quote(symbol=symbol, bid=bid, ask=ask, at=r["ts"], high=hi, low=lo,
                  bar_start=bar_start)
+
+
+async def public_quote(symbol: str, api: Any = None) -> Quote | None:
+    """바이낸스 공개 호가 + 최근 1분봉 고저. 실패하면 None (예외를 밖으로 내지 않는다)."""
+    api = api or _api()
+    now = datetime.now(UTC)
+    try:
+        bt = await api.book_ticker(symbol)
+        bid, ask = float(bt.get("bidPrice") or 0), float(bt.get("askPrice") or 0)
+    except Exception as e:  # noqa: BLE001
+        log.debug("공개 호가 실패 %s: %s", symbol, e)
+        return None
+    if bid <= 0 or ask <= 0 or ask < bid:
+        return None
+    cached = _bar_cache.get(symbol)
+    if cached is None or (now - cached[0]).total_seconds() > PUBLIC_BAR_CACHE_S:
+        hi = lo = bar_start = None
+        try:
+            bars = await api.klines(symbol, "1m", limit=2)
+            if bars:
+                hi = max(b.high for b in bars)
+                lo = min(b.low for b in bars)
+                bar_start = min(b.ts for b in bars)
+        except Exception as e:  # noqa: BLE001
+            log.debug("공개 1분봉 실패 %s: %s", symbol, e)
+        cached = (now, hi, lo, bar_start)
+        _bar_cache[symbol] = cached
+    _, hi, lo, bar_start = cached
+    return Quote(symbol=symbol, bid=bid, ask=ask, at=now, high=hi, low=lo, bar_start=bar_start)
+
+
+async def latest_quote(symbol: str, *, max_age_s: int = MAX_AGE_S,
+                       allow_public: bool | None = None) -> Quote | None:
+    q = await _db_quote(symbol, max_age_s=max_age_s)
+    if q is not None:
+        return q
+    if allow_public is None:
+        allow_public = public_allowed(symbol)
+    if not allow_public:
+        return None
+    return await public_quote(symbol)

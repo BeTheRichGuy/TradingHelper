@@ -83,6 +83,36 @@ class Settings(BaseSettings):
     signal_notional_x: float = Field(1.0, validation_alias="TH_SIGNAL_NOTIONAL_X")
     signal_hard_stop_pct: float = Field(3.0, validation_alias="TH_SIGNAL_HARD_STOP_PCT")
 
+    # ── v3.0 뉴스·이벤트 매매 엔진 (docs/17) — 페이퍼 전용 ─────────
+    news_enabled: bool = Field(False, validation_alias="TH_NEWS_ENABLED")
+    # observe: 수집·판단만 · paper: 바로 페이퍼 주문 · approve: 승인된 것만 페이퍼 주문
+    # live 는 아직 없다 — 설정해도 approve 로 동작하고 경고를 남긴다 (docs/17 §5)
+    news_exec: Literal["observe", "paper", "approve", "live"] = Field("paper", validation_alias="TH_NEWS_EXEC")
+    news_model: str = Field("claude-opus-5", validation_alias="TH_NEWS_MODEL")
+    news_triage_model: str = Field("claude-haiku-4-5", validation_alias="TH_NEWS_TRIAGE_MODEL")
+    # 본판단의 사고 깊이. 비용의 대부분이 사고 토큰이라 low/medium 이면 절반 이하로 준다 (PHASE9 문서 §5)
+    news_effort: Literal["low", "medium", "high"] = Field("high", validation_alias="TH_NEWS_EFFORT")
+    # 켤 소스. 비용은 판단 건수에 비례하고 건수는 소스가 정한다 — RSS 를 빼면 절반 이하
+    news_sources_raw: str = Field("telegram,edgar,yahoo,gnews,finnhub", validation_alias="TH_NEWS_SOURCES")
+    anthropic_api_key: str = Field("", validation_alias="ANTHROPIC_API_KEY")
+    news_min_confidence: float = Field(0.70, validation_alias="TH_NEWS_MIN_CONFIDENCE")
+    # 작전 하나의 마진 합계(시드 %) × 배율 = 노셔널. 기본 10% × 10 = 시드 1.0배 (docs/17 D6)
+    news_margin_pct_max: float = Field(10.0, validation_alias="TH_NEWS_MARGIN_PCT_MAX")
+    news_leverage: float = Field(10.0, validation_alias="TH_NEWS_LEVERAGE")
+    news_stop_min_pct: float = Field(1.0, validation_alias="TH_NEWS_STOP_MIN_PCT")
+    news_stop_max_pct: float = Field(5.0, validation_alias="TH_NEWS_STOP_MAX_PCT")
+    news_max_hold_hours: int = Field(168, validation_alias="TH_NEWS_MAX_HOLD_HOURS")
+    news_approval_ttl_min: int = Field(30, validation_alias="TH_NEWS_APPROVAL_TTL_MIN")
+    news_daily_usd_cap: float = Field(5.0, validation_alias="TH_NEWS_DAILY_USD_CAP")
+    # 텔레그램 — 채널 읽기(사용자 세션) / 알림·승인(봇). 둘은 별개 자격이다
+    telegram_api_id: int = Field(0, validation_alias="TH_TELEGRAM_API_ID")
+    telegram_api_hash: str = Field("", validation_alias="TH_TELEGRAM_API_HASH")
+    telegram_channels_raw: str = Field("", validation_alias="TH_TELEGRAM_CHANNELS")
+    telegram_bot_token: str = Field("", validation_alias="TH_TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field("", validation_alias="TH_TELEGRAM_CHAT_ID")
+    finnhub_api_key: str = Field("", validation_alias="TH_FINNHUB_API_KEY")
+    edgar_user_agent: str = Field("", validation_alias="TH_EDGAR_USER_AGENT")
+
     @field_validator("symbols_raw", "reference_tickers_raw")
     @classmethod
     def _strip(cls, v: str) -> str:
@@ -96,6 +126,20 @@ class Settings(BaseSettings):
     @property
     def signal_symbols(self) -> list[str]:
         return [s.strip().upper() for s in self.signal_symbols_raw.split(",") if s.strip()]
+
+    @property
+    def telegram_channels(self) -> list[str]:
+        """@username 또는 숫자 id. 공백·빈 항목은 버린다."""
+        return [c.strip() for c in self.telegram_channels_raw.split(",") if c.strip()]
+
+    @property
+    def news_sources(self) -> list[str]:
+        return [s.strip().lower() for s in self.news_sources_raw.split(",") if s.strip()]
+
+    @property
+    def news_exec_effective(self) -> str:
+        """`live` 는 아직 경로가 없다 — approve 로 내린다 (docs/17 §5)."""
+        return "approve" if self.news_exec == "live" else self.news_exec
 
     @property
     def underlying_map(self) -> dict[str, str]:

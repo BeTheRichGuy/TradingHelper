@@ -267,6 +267,11 @@ def stream() -> None:
         # 캘린더는 하루 1회 알아서 갱신한다. 손으로 치는 방식은 언젠가 빠뜨리고,
         # 빠뜨린 날이 하필 실적 발표일이다 (auto_sync_loop 주석 참고).
         cal_task = asyncio.create_task(auto_sync_loop(stop_evt), name="calendar")
+        # 뉴스 수집 (docs/17 §3). 켜져 있을 때만. 소스 하나가 죽어도 시세 수집과는 무관하다.
+        news_task = None
+        if s.news_enabled:
+            from .news.collect import build_collector
+            news_task = asyncio.create_task(build_collector(s).run(stop_evt), name="news")
         stop_task = asyncio.create_task(stop_evt.wait(), name="stop")
 
         try:
@@ -282,6 +287,8 @@ def stream() -> None:
             stop_task.cancel()
             poller_task.cancel()          # 폴러는 바로 끊어도 된다
             cal_task.cancel()
+            if news_task is not None:
+                news_task.cancel()
             collector.stop()              # 수집기는 스스로 마무리하게 둔다
 
             try:
@@ -294,6 +301,7 @@ def stream() -> None:
 
             await asyncio.gather(
                 collector_task, poller_task, cal_task, stop_task,
+                *([news_task] if news_task is not None else []),
                 return_exceptions=True,
             )
 
@@ -2175,6 +2183,277 @@ def serve(
         "th.api.server:create_app", host=host, port=port, reload=reload,
         factory=True, log_level=s.log_level.lower(),
     )
+
+
+
+# ─────────────────────────────────────────────────────────
+# v3.0 뉴스·이벤트 매매 엔진 (docs/17)
+# ─────────────────────────────────────────────────────────
+
+news_app = typer.Typer(
+    help="뉴스·이벤트 매매 엔진 (docs/17). 수집은 th stream 안에서 돈다. 여기는 점검·단독 실행용.",
+)
+app.add_typer(news_app, name="news")
+
+
+@news_app.command("collect")
+def news_collect() -> None:
+    """뉴스 수집만 단독으로 돌린다 (th stream 없이). Ctrl+C 로 종료."""
+    _boot()
+    s = get_settings()
+
+    async def go():
+        from .news.collect import build_collector
+
+        loop = asyncio.get_running_loop()
+        stop_evt = asyncio.Event()
+
+        def _on_sigint(_sig, _frame):
+            loop.call_soon_threadsafe(stop_evt.set)
+
+        try:
+            prev = signal.signal(signal.SIGINT, _on_sigint)
+        except (ValueError, OSError):
+            prev = None
+        try:
+            await build_collector(s).run(stop_evt)
+        finally:
+            if prev is not None:
+                signal.signal(signal.SIGINT, prev)
+
+    _run(go())
+    console.print("[green]뉴스 수집 종료[/green]")
+
+
+@news_app.command("status")
+def news_status() -> None:
+    """소스별 적재 현황 · 아직 판단하지 않은 건수."""
+    from rich.table import Table
+
+    _boot()
+
+    async def go():
+        from .news import store
+        return await store.source_status(), await store.cost_today()
+
+    rows, cost = _run(go())
+    t = Table(title=f"뉴스 적재 현황 · 오늘 판단 비용 ${cost:.3f}")
+    for c in ("소스", "24h", "전체", "마지막", "미판단"):
+        t.add_column(c)
+    for r in rows:
+        last = r["last_ts"].strftime("%m-%d %H:%M") if r.get("last_ts") else "-"
+        t.add_row(str(r["source"]), str(r["last_24h"]), str(r["total"]), last, str(r["unjudged"]))
+    if not rows:
+        console.print("[yellow]아직 수집된 뉴스가 없습니다. TH_NEWS_ENABLED=true 로 두고 th stream 을 켜세요.[/yellow]")
+    else:
+        console.print(t)
+
+
+@news_app.command("recent")
+def news_recent(
+    limit: int = typer.Option(30, "--limit", "-n"),
+    symbol: str | None = typer.Option(None, "--symbol", "-s", help="예: NVDAUSDT 또는 NVDA"),
+    source: str | None = typer.Option(None, "--source", help="telegram | edgar | yahoo | gnews | finnhub"),
+) -> None:
+    """최근 뉴스 목록."""
+    from rich.table import Table
+
+    from .news import tickers as _tk
+
+    _boot()
+    sym = _tk.symbol_of(_tk.ticker_of(symbol)) if symbol else None
+
+    async def go():
+        from .news import store
+        return await store.recent(limit, symbol=sym, source=source)
+
+    rows = _run(go())
+    t = Table(title=f"최근 뉴스 {len(rows)}건")
+    for c in ("시각(UTC)", "소스", "종목", "제목"):
+        t.add_column(c)
+    for r in rows:
+        syms = ",".join(_tk.ticker_of(x) for x in r["symbols"]) or "-"
+        t.add_row(r["ts"].strftime("%m-%d %H:%M"), r["source"], syms, str(r["title"])[:80])
+    console.print(t)
+
+
+@news_app.command("extract")
+def news_extract(text: str = typer.Argument(..., help="종목 매핑을 확인할 문장")) -> None:
+    """문장에서 유니버스 심볼을 어떻게 뽑는지 본다 (네트워크·DB 없음)."""
+    from .news import tickers as _tk
+
+    syms = _tk.extract(text)
+    if syms:
+        console.print(" ".join(f"[cyan]{_tk.ticker_of(s)}[/cyan]({_tk.display_name(s)})" for s in syms))
+    else:
+        console.print("[yellow]매핑된 종목 없음[/yellow]")
+
+
+@news_app.command("telegram-login")
+def news_telegram_login() -> None:
+    """텔레그램 사용자 세션 로그인 (1회). 전화번호·인증코드는 터미널에서 묻는다."""
+    _boot()
+    s = get_settings()
+    if not s.telegram_api_id or not s.telegram_api_hash:
+        console.print("[red]TH_TELEGRAM_API_ID / TH_TELEGRAM_API_HASH 를 .env 에 먼저 넣으세요 (my.telegram.org)[/red]")
+        raise typer.Exit(1)
+
+    async def go():
+        from .news.sources.telegram import login
+        return await login(s.telegram_api_id, s.telegram_api_hash)
+
+    chans = _run(go())
+    console.print("[green]로그인 완료.[/green] 구독 중인 채널 (TH_TELEGRAM_CHANNELS 에 쓸 이름):")
+    for name, ref in chans:
+        console.print(f"  {ref:<28} {name}")
+    if not chans:
+        console.print("  (채널 없음)")
+
+
+@news_app.command("judge")
+def news_judge(
+    limit: int = typer.Option(5, "--limit", "-n", help="이번에 판단할 최대 건수"),
+) -> None:
+    """아직 판단하지 않은 뉴스를 지금 판단한다 (Claude 호출 · 비용 발생). 주문은 내지 않는다 — 판단 기록만."""
+    from rich.table import Table
+
+    _boot()
+    s = get_settings()
+
+    async def go():
+        from .exchange.binance_rest import BinanceFutures
+        from .news import store
+        from .news.engine import NewsEngine
+        from .news.judge import Judge, make_context_builder
+        from .universe import active_symbols
+
+        api = BinanceFutures()
+        judge = Judge(model=s.news_model, triage_model=s.news_triage_model, universe=list(active_symbols()),
+                      margin_max=float(s.news_margin_pct_max), leverage=float(s.news_leverage),
+                      stop_min=float(s.news_stop_min_pct), stop_max=float(s.news_stop_max_pct),
+                      hold_max=int(s.news_max_hold_hours), api_key=s.anthropic_api_key, effort=s.news_effort)
+
+        class NoRunner:            # 주문 경로 없음 — observe 모드라 부르지도 않는다
+            mgr = None
+
+        eng = NewsEngine(NoRunner(), judge, exec_mode="observe", min_confidence=float(s.news_min_confidence),
+                         leverage=float(s.news_leverage), stop_max_pct=float(s.news_stop_max_pct),
+                         approval_ttl_min=int(s.news_approval_ttl_min), daily_usd_cap=float(s.news_daily_usd_cap),
+                         context_builder=make_context_builder(api))
+        rows = await store.unjudged(limit)
+        out = []
+        for r in rows:
+            out.append(await eng.process(store.row_to_item(r), int(r["id"])))
+        await api.close()
+        return out, eng.cost_today
+
+    results, cost = _run(go())
+    t = Table(title=f"판단 {len(results)}건 · 오늘 비용 ${cost:.3f}")
+    for c in ("결과", "방향", "확신", "종목", "제목", "사유"):
+        t.add_column(c)
+    for r in results:
+        t.add_row(str(r.get("action")), str(r.get("direction") or "-"),
+                  f"{r['confidence']:.2f}" if r.get("confidence") is not None else "-",
+                  ",".join(r.get("symbols") or []) or "-", str(r.get("title"))[:50], str(r.get("reason"))[:60])
+    console.print(t)
+
+
+@news_app.command("test")
+def news_test(
+    text: str = typer.Argument(..., help="판단해 볼 뉴스 문장 (제목 또는 제목+본문)"),
+    symbol: str | None = typer.Option(None, "--symbol", "-s", help="매핑이 안 되면 종목을 직접 준다"),
+) -> None:
+    """임의 문장으로 판단을 돌려 본다 (DB 저장 없음 · Claude 호출 · 비용 발생)."""
+    from datetime import UTC, datetime
+
+    _boot()
+    s = get_settings()
+
+    async def go():
+        from .exchange.binance_rest import BinanceFutures
+        from .news import tickers as _tk
+        from .news.judge import Judge, make_context_builder
+        from .news.models import NewsItem
+        from .universe import active_symbols
+
+        syms = _tk.extract(text)
+        if symbol:
+            syms = tuple(sorted(set(syms) | {_tk.symbol_of(_tk.ticker_of(symbol))}))
+        lines = [ln for ln in text.splitlines() if ln.strip()] or [text]
+        item = NewsItem(source="manual", source_id="test", ts=datetime.now(UTC), title=lines[0][:400],
+                        body="\n".join(lines[1:]), symbols=syms)
+        api = BinanceFutures()
+        judge = Judge(model=s.news_model, triage_model=s.news_triage_model, universe=list(active_symbols()),
+                      margin_max=float(s.news_margin_pct_max), leverage=float(s.news_leverage),
+                      stop_min=float(s.news_stop_min_pct), stop_max=float(s.news_stop_max_pct),
+                      hold_max=int(s.news_max_hold_hours), api_key=s.anthropic_api_key, effort=s.news_effort)
+        ctx = await make_context_builder(api)(item)
+        tri, rec1 = await judge.triage(item, ctx)
+        j, rec2 = (None, None)
+        if tri is not None and tri.relevant and tri.magnitude != "low":
+            j, rec2 = await judge.full(item, ctx)
+        await api.close()
+        return item, ctx, tri, rec1, j, rec2
+
+    item, ctx, tri, rec1, j, rec2 = _run(go())
+    console.print(f"[dim]{ctx.render()}[/dim]")
+    console.print(f"트리아지 ({rec1.model}, ${rec1.cost_usd:.4f}): "
+                  + (f"관련={tri.relevant} 크기={tri.magnitude} 종목={tri.symbols} — {tri.reason_ko}" if tri else f"[red]{rec1.error}[/red]"))
+    if rec2 is None:
+        console.print("[yellow]본판단으로 가지 않음[/yellow]")
+        return
+    if j is None:
+        console.print(f"[red]본판단 실패: {rec2.error}[/red]")
+        return
+    console.print(f"본판단 ({rec2.model}, ${rec2.cost_usd:.4f}): [bold]{j.direction}[/bold] 확신 {j.confidence:.2f} "
+                  f"크기 {j.magnitude} 종목 {j.symbols} 반영됨={j.already_priced_in} 지평 {j.horizon_hours}h")
+    console.print(f"  논지: {j.thesis_ko}")
+    for r in j.risks_ko:
+        console.print(f"  위험: {r}")
+    if rec2.error:
+        console.print(f"  [yellow]{rec2.error}[/yellow]")
+    if j.plan:
+        p = j.plan
+        console.print(f"  계획: 손절 {p.stop_pct:g}% · 목표 {p.target_pct:g}%"
+                      + (f" / {p.tp2_pct:g}%" if p.tp2_pct else "") + f" · 최대 {p.max_hold_hours}h")
+        for i, l in enumerate(p.legs, 1):
+            console.print(f"    {i}: 마진 {l.margin_pct:g}% {l.entry}"
+                          + (f" {l.limit_offset_pct:+g}%" if l.entry == "limit" else "") + f" · 만료 {l.expire_hours:g}h")
+        console.print(f"  무효화: {p.invalidation_ko}")
+    ok, why = j.actionable(float(s.news_min_confidence))
+    console.print(f"  → {'매매 가능' if ok else '매매 안 함: ' + why}")
+
+
+@news_app.command("campaigns")
+def news_campaigns(
+    limit: int = typer.Option(30, "--limit", "-n"),
+    status: str | None = typer.Option(None, "--status", help="proposed|pending_approval|approved|open|closed|rejected|expired"),
+) -> None:
+    """작전 목록."""
+    from rich.table import Table
+
+    from .news import tickers as _tk
+
+    _boot()
+
+    async def go():
+        from .news import store
+        return await store.campaigns(limit, status=status)
+
+    rows = _run(go())
+    t = Table(title=f"뉴스 작전 {len(rows)}건")
+    for c in ("생성(UTC)", "id", "종목", "방향", "상태", "모드", "다리", "손절/목표", "R", "논지"):
+        t.add_column(c)
+    for r in rows:
+        plan = r.get("plan") or {}
+        legs = r.get("legs") or []
+        legs_s = " ".join(f"{int(l['leg_no'])}:{(l.get('status') or '-')[:4]}" for l in legs)
+        rr = r.get("realized_r")
+        t.add_row(r["created_at"].strftime("%m-%d %H:%M"), r["id"][-8:], _tk.ticker_of(r["symbol"]), r["direction"],
+                  r["status"], r["exec_mode"], legs_s,
+                  f"{plan.get('stop_pct', '-')}/{plan.get('target_pct', '-')}",
+                  f"{rr:+.2f}" if rr is not None else "-", str(r.get("thesis_ko") or "")[:40])
+    console.print(t)
 
 
 if __name__ == "__main__":

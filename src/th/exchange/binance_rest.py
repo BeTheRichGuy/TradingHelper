@@ -245,6 +245,10 @@ class BinanceFutures:
             for r in raw
         ]
 
+    async def book_ticker(self, symbol: str) -> dict[str, Any]:
+        """공개 최우선 호가. 수집하지 않는 종목의 페이퍼 체결 판정용 폴백 (docs/17 §5)."""
+        return await self._get("/fapi/v1/ticker/bookTicker", {"symbol": symbol})
+
     async def premium_index(self, symbol: str) -> dict[str, Any]:
         """현재 마크가격 · 인덱스가격 · 직전 펀딩률 · 다음 펀딩 시각.
 

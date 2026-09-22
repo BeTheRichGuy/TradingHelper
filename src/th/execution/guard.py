@@ -11,11 +11,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..account.risk import EXPOSURE_LIMIT_X, SYMBOL_LIMIT_X
 from .models import LONG, SHORT, Bracket
 
 # 손절폭 허용 범위 — strategy/risk.py 와 같은 근거(사용자 목표 TP1 = 본주 1~2%)
 STOP_MIN_PCT = 0.20
 STOP_MAX_PCT = 3.00
+# 요청이 `stop_max_pct` 로 상한을 올릴 수 있지만 **이 값은 못 넘긴다** (docs/17 D5 — 10배 격리 청산선 −9.5%,
+# 청산 여유 1% 를 생각하면 5% 가 물리적 상한이다)
+STOP_MAX_PCT_HARD = 5.00
 
 DAILY_LOSS_LIMIT_R = -3.0
 MAX_OPEN_BRACKETS = 1          # 동시에 열어둘 브래킷 수
@@ -50,6 +54,12 @@ class GuardInput:
     execution_mode: str = "none"
     max_open_brackets: int = MAX_OPEN_BRACKETS
     """동시에 열어둘 브래킷 수. 기본 1. 시그널 엔진이 여러 종목을 볼 때만 TH_MAX_OPEN_BRACKETS 로 올린다."""
+    stop_max_pct: float | None = None
+    """요청별 손절 상한(%). None 이면 STOP_MAX_PCT. 어떤 값을 줘도 STOP_MAX_PCT_HARD 를 넘길 수 없다."""
+    open_notional_usdt: float | None = None
+    """이미 열린(체결 + 대기) 노셔널 합계. None 이면 노출 검사를 하지 않는다 — 호출자가 모르면 안 넘긴다."""
+    symbol_open_notional_usdt: float | None = None
+    """같은 종목의 열린 노셔널. None 이면 종목 노출 검사를 하지 않는다."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,10 +102,11 @@ def check(inp: GuardInput) -> GuardResult:
                 f"숏인데 손절({b.stop_price:g})이 현재가({inp.ref_price:g}) 아래에 있다"
             )
         pct = b.stop_pct(inp.ref_price)
+        stop_max = STOP_MAX_PCT if inp.stop_max_pct is None else min(float(inp.stop_max_pct), STOP_MAX_PCT_HARD)
         if pct < STOP_MIN_PCT:
             bad.append(f"손절폭 {pct:.2f}% — 너무 좁다 (최소 {STOP_MIN_PCT}%)")
-        elif pct > STOP_MAX_PCT:
-            bad.append(f"손절폭 {pct:.2f}% — 너무 넓다 (최대 {STOP_MAX_PCT}%)")
+        elif pct > stop_max + 1e-9:
+            bad.append(f"손절폭 {pct:.2f}% — 너무 넓다 (최대 {stop_max}%)")
 
     # ── 2. 손절 vs 청산가 ──────────────────────────────
     if inp.liquidation_price and inp.liquidation_price > 0 and inp.ref_price > 0:
@@ -127,6 +138,21 @@ def check(inp: GuardInput) -> GuardResult:
             bad.append(
                 f"명목 {notional:,.0f} USDT — 한도 {inp.max_notional_usdt:,.0f} 초과"
             )
+
+    # ── 4b. 노출 한도 (docs/17 §2) — 규율 지표가 보여주기만 하던 숫자를 여기서 막는다
+    if inp.equity_usdt > 0 and inp.ref_price > 0 and b.qty > 0:
+        new_notional = b.qty * inp.ref_price
+        if inp.open_notional_usdt is not None:
+            total_x = (inp.open_notional_usdt + new_notional) / inp.equity_usdt
+            if total_x > EXPOSURE_LIMIT_X + 1e-6:
+                bad.append(
+                    f"노출 합계 {total_x:.2f}배 — 한도 {EXPOSURE_LIMIT_X:g}배 초과 "
+                    f"(열린 {inp.open_notional_usdt:,.0f} + 새 {new_notional:,.0f} USDT)"
+                )
+        if inp.symbol_open_notional_usdt is not None:
+            sym_x = (inp.symbol_open_notional_usdt + new_notional) / inp.equity_usdt
+            if sym_x > SYMBOL_LIMIT_X + 1e-6:
+                bad.append(f"{b.symbol} 노출 {sym_x:.2f}배 — 한 종목 한도 {SYMBOL_LIMIT_X:g}배 초과")
 
     # ── 5. 계좌 상태 ───────────────────────────────────
     if inp.daily_unknown:

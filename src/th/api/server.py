@@ -206,6 +206,7 @@ class Hub:
         self._last_positions: list = []
         # v2.2 — 시그널 엔진. 러너가 있을 때만 붙는다.
         self.signals = None
+        self.news = None                 # v3.0 뉴스 엔진 (docs/17)
 
     # ── 공개 API 클라이언트 (라우트와 루프가 함께 쓴다) ────
     def public_api(self):
@@ -261,6 +262,21 @@ class Hub:
             return
         self.runner = runner
         await self.start_signals()
+        await self.start_news()
+
+    async def start_news(self) -> None:
+        """v3.0 — 뉴스·이벤트 엔진 (docs/17). TH_NEWS_ENABLED 이고 러너가 있을 때만."""
+        if self.runner is None or not get_settings().news_enabled:
+            return
+        from ..news.engine import build_news_engine
+
+        try:
+            engine = build_news_engine(self.runner, self.public_api(), get_settings())
+            await engine.start()
+        except Exception:                   # noqa: BLE001
+            log.exception("뉴스 엔진 시작 실패 — 손주문·시그널 엔진은 그대로 됩니다")
+            return
+        self.news = engine
 
     async def start_signals(self) -> None:
         """v2.2 — 시그널 엔진. 러너 없이는 뜨지 않는다 (주문 경로가 러너에만 있다)."""
@@ -277,6 +293,10 @@ class Hub:
         self.signals = engine
 
     async def stop_runner(self) -> None:
+        if getattr(self, "news", None) is not None:
+            with contextlib.suppress(Exception):
+                await self.news.stop()
+            self.news = None
         if self.signals is not None:
             with contextlib.suppress(Exception):
                 await self.signals.stop()
